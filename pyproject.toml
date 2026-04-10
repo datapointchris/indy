@@ -1,0 +1,100 @@
+[project]
+name = "indy"
+version = "0.1.0"
+description = "Semantic search index for local codebases, docs, and notes"
+authors = [{ name = "Chris Birch", email = "datapointchris@gmail.com" }]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "typer>=0.15.0",
+    "rich>=13.0.0",
+    "chromadb>=0.5.0,<0.7",
+    "mcp[cli]>=1.0.0",
+]
+
+[project.urls]
+Repository = "https://github.com/datapointchris/indy"
+
+[project.scripts]
+indy = "indy.main:indy_app"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.10.0",
+    "pre-commit>=4.3.0",
+    "pytest>=8.0.0",
+    "ruff>=0.7.0",
+]
+
+
+# ---------- Tool Configurations ---------- #
+
+
+[tool.codespell]
+skip = "*.lock"
+ignore-words-list = "astroid,aNULL,ANULL,anull"
+check-filenames = true
+
+
+[tool.mypy]
+pretty = true
+ignore_missing_imports = true
+check_untyped_defs = false
+warn_return_any = false
+
+
+[tool.pytest.ini_options]
+addopts = "-vv"
+minversion = "8.0"
+testpaths = ["tests"]
+
+
+[tool.ruff]
+line-length = 140
+exclude = [
+    ".git",
+    "__pycache__",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".vscode",
+    ".venv",
+    "build",
+    "dist",
+]
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "UP",
+    "B",
+    "SIM",
+    "I",
+]
+ignore = ["SIM108"]
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+
+# ---------- Build System ---------- #
+
+
+[build-system]
+requires = ["uv_build>=0.9.13,<0.11"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "indy"
+module-root = "src"

@@ -1,0 +1,26 @@
+import os
+from pathlib import Path
+
+INDY_DIR = Path(os.environ.get('INDY_DIR', Path.home() / 'shart' / 'indy'))
+DB_PATH = INDY_DIR / 'indy.db'
+CHROMA_PATH = INDY_DIR / 'chroma'
+LOG_PATH = INDY_DIR / 'indy.log'
+
+REPOS_FILE = Path(os.environ.get('INDY_REPOS_FILE', Path.home() / 'dev' / 'repos.json'))
+
+# Files to skip regardless of extension
+SKIP_DIRS = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', 'dist', 'build', '.mypy_cache', '.ruff_cache', '.pytest_cache'}
+SKIP_FILES = {'uv.lock', 'package-lock.json', 'yarn.lock', 'Cargo.lock', 'go.sum'}
+
+# Extensions to index
+CODE_EXTENSIONS = {'.py', '.go', '.js', '.ts', '.tsx', '.sh', '.rs', '.rb'}
+DOC_EXTENSIONS = {'.md', '.rst', '.txt'}
+CONFIG_EXTENSIONS = {'.yaml', '.yml', '.toml', '.json'}
+
+MAX_FILE_SIZE_BYTES = 500_000
+
+# Chunking
+CODE_CHUNK_SIZE = 600
+CODE_CHUNK_OVERLAP = 80
+PROSE_CHUNK_SIZE = 400
+PROSE_CHUNK_OVERLAP = 50
