@@ -1,12 +1,16 @@
 import os
 from pathlib import Path
 
-INDY_DIR = Path(os.environ.get('INDY_DIR', Path.home() / 'shart' / 'indy'))
+INDY_DIR = Path(os.environ.get('INDY_DIR', Path.home() / 'dev' / 'indy'))
 DB_PATH = INDY_DIR / 'indy.db'
-CHROMA_PATH = INDY_DIR / 'chroma'
 LOG_PATH = INDY_DIR / 'indy.log'
 
 REPOS_FILE = Path(os.environ.get('INDY_REPOS_FILE', Path.home() / 'dev' / 'repos.json'))
+
+# Ollama embedding config — httpx calls, no Python package needed
+OLLAMA_HOST = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
+OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'nomic-embed-text')
+EMBEDDING_DIM = 768  # nomic-embed-text output dimension
 
 # Files to skip regardless of extension
 SKIP_DIRS = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', 'dist', 'build', '.mypy_cache', '.ruff_cache', '.pytest_cache'}

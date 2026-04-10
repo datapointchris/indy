@@ -22,6 +22,4 @@ htmlcov/
 .env
 *.log
 
-# uv
-uv.lock
 .planning
