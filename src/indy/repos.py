@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from indy.config import EXTRA_PATHS_RAW
 from indy.config import REPOS_FILE
 
 
@@ -18,6 +19,16 @@ def load_active_repos() -> list[dict]:
         if path.exists():
             repos.append({'name': repo['name'], 'path': path})
     return repos
+
+
+def load_extra_paths() -> list[dict]:
+    """Return configured non-repo paths (EXTRA_PATHS_RAW) that exist on disk."""
+    paths = []
+    for entry in EXTRA_PATHS_RAW:
+        path = Path(entry['path'].replace('~', str(Path.home())))
+        if path.exists():
+            paths.append({'name': entry['name'], 'path': path})
+    return paths
 
 
 def get_repo_by_name(name: str) -> dict | None:

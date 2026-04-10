@@ -21,6 +21,7 @@ from indy.config import SKIP_DIRS
 from indy.config import SKIP_FILES
 from indy.repos import get_repo_by_name
 from indy.repos import load_active_repos
+from indy.repos import load_extra_paths
 from indy.storage import delete_file_chunks
 from indy.storage import finish_index_run
 from indy.storage import get_chunks_by_symbol
@@ -181,7 +182,10 @@ def index_repo(repo_name: str) -> dict:
 
 
 def index_all() -> list[dict]:
-    return [index_path(repo['path'], repo['name']) for repo in load_active_repos()]
+    """Index all active repos from repos.json plus configured extra paths."""
+    results = [index_path(repo['path'], repo['name']) for repo in load_active_repos()]
+    results += [index_path(ep['path'], ep['name']) for ep in load_extra_paths()]
+    return results
 
 
 def search(query: str, repo: str | None = None, language: str | None = None, limit: int = 10) -> list[dict]:

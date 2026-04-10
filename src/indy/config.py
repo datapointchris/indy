@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -6,6 +7,10 @@ DB_PATH = INDY_DIR / 'indy.db'
 LOG_PATH = INDY_DIR / 'indy.log'
 
 REPOS_FILE = Path(os.environ.get('INDY_REPOS_FILE', Path.home() / 'dev' / 'repos.json'))
+
+# Non-repo paths included in default 'indy index' runs (alongside repos.json).
+# Override with INDY_EXTRA_PATHS as JSON: '[{"name":"notes-dev","path":"~/notes/dev"}]'
+EXTRA_PATHS_RAW: list[dict] = json.loads(os.environ.get('INDY_EXTRA_PATHS', '[{"name": "notes-dev", "path": "~/notes/dev"}]'))
 
 # Ollama embedding config — httpx calls, no Python package needed
 OLLAMA_HOST = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
