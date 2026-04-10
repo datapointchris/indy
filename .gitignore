@@ -19,7 +19,6 @@ build/
 htmlcov/
 
 # Project
-.planning/
 .env
 *.log
 
