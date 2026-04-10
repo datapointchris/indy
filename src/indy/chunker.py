@@ -2,6 +2,24 @@ import ast
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+    import tree_sitter_go as _tsgo
+    import tree_sitter_rust as _tsrust
+    import tree_sitter_typescript as _tsts
+    from tree_sitter import Language as _Language
+    from tree_sitter import Node as _Node
+    from tree_sitter import Parser as _Parser
+
+    _TS_LANGUAGES: dict[str, _Language] = {
+        'go': _Language(_tsgo.language()),
+        'rust': _Language(_tsrust.language()),
+        'typescript': _Language(_tsts.language_typescript()),
+        'tsx': _Language(_tsts.language_tsx()),
+    }
+    _TS_AVAILABLE = True
+except ImportError:
+    _TS_AVAILABLE = False
+
 from indy.config import CODE_CHUNK_OVERLAP
 from indy.config import CODE_CHUNK_SIZE
 from indy.config import CODE_EXTENSIONS
@@ -44,6 +62,9 @@ def detect_language(file_path: str) -> str | None:
     return LANGUAGE_MAP.get(Path(file_path).suffix.lower())
 
 
+_TS_EXTENSIONS = {'.go', '.ts', '.tsx', '.rs'}
+
+
 def chunk_file(file_path: str, content: str, repo: str) -> list[Chunk]:
     """Dispatch to the appropriate chunking strategy based on file extension."""
     language = detect_language(file_path)
@@ -51,6 +72,8 @@ def chunk_file(file_path: str, content: str, repo: str) -> list[Chunk]:
 
     if ext == '.py':
         return chunk_python(file_path, content, repo)
+    elif ext in _TS_EXTENSIONS:
+        return chunk_treesitter(file_path, content, repo, language)
     elif ext in DOC_EXTENSIONS:
         return chunk_prose(file_path, content, repo, language)
     elif ext in CONFIG_EXTENSIONS:
@@ -294,3 +317,85 @@ def chunk_config(file_path: str, content: str, repo: str, language: str | None) 
             return [Chunk(text=content, file_path=file_path, repo=repo, language=language, symbol_type='prose')]
         return []
     return chunk_code(file_path, content, repo, language)
+
+
+# ── tree-sitter chunker ───────────────────────────────────────────────────────
+
+# Node types that become individual chunks. When a match is found, recursion
+# stops so nested functions aren't double-chunked.
+_TS_EXTRACT_TYPES: dict[str, set[str]] = {
+    'go': {'function_declaration', 'method_declaration'},
+    'typescript': {'function_declaration', 'method_definition'},
+    'tsx': {'function_declaration', 'method_definition'},
+    'rust': {'function_item'},
+}
+
+_TS_SYMBOL_TYPE_MAP: dict[str, str] = {
+    'function_declaration': 'function',
+    'method_declaration': 'method',
+    'method_definition': 'method',
+    'function_item': 'function',
+}
+
+
+def _ts_symbol_name(node: '_Node') -> str | None:
+    name_node = node.child_by_field_name('name')
+    if name_node is None or name_node.text is None:
+        return None
+    return name_node.text.decode('utf-8')
+
+
+def _ts_walk(
+    node: '_Node',
+    lines: list[str],
+    file_path: str,
+    repo: str,
+    language: str | None,
+    extract_types: set[str],
+    chunks: list[Chunk],
+) -> None:
+    if node.type in extract_types:
+        start = node.start_point[0]
+        end = node.end_point[0] + 1
+        text = '\n'.join(lines[start:end])
+        if len(text) > 1500:
+            # Large symbol — fall back to code splitter for this node only
+            chunks.extend(chunk_code(file_path, text, repo, language))
+        else:
+            chunks.append(
+                Chunk(
+                    text=text,
+                    file_path=file_path,
+                    repo=repo,
+                    language=language,
+                    symbol_name=_ts_symbol_name(node),
+                    symbol_type=_TS_SYMBOL_TYPE_MAP.get(node.type, 'function'),
+                )
+            )
+        return  # don't recurse — avoids double-chunking nested definitions
+
+    for child in node.children:
+        if child.is_named:
+            _ts_walk(child, lines, file_path, repo, language, extract_types, chunks)
+
+
+def chunk_treesitter(file_path: str, content: str, repo: str, language: str | None) -> list[Chunk]:
+    """AST chunking via tree-sitter for Go, TypeScript, and Rust.
+    Falls back to recursive code splitter if tree-sitter packages are not installed."""
+    if not _TS_AVAILABLE:
+        return chunk_code(file_path, content, repo, language)
+
+    # .tsx files share the 'typescript' language label but need the tsx grammar
+    lang_key = 'tsx' if file_path.endswith('.tsx') else language
+    ts_language = _TS_LANGUAGES.get(lang_key or '')
+    if ts_language is None:
+        return chunk_code(file_path, content, repo, language)
+
+    extract_types = _TS_EXTRACT_TYPES.get(lang_key or '', set())
+    parser = _Parser(ts_language)
+    tree = parser.parse(bytes(content, 'utf-8'))
+
+    chunks: list[Chunk] = []
+    _ts_walk(tree.root_node, content.splitlines(), file_path, repo, language, extract_types, chunks)
+
+    return chunks if chunks else chunk_code(file_path, content, repo, language)
