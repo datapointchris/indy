@@ -14,7 +14,7 @@ EXTRA_PATHS_RAW: list[dict] = json.loads(os.environ.get('INDY_EXTRA_PATHS', '[{"
 
 # Ollama embedding config — httpx calls, no Python package needed
 OLLAMA_HOST = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
-OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'nomic-embed-text')
+OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'nomic-embed-code')
 EMBEDDING_DIM = 768  # nomic-embed-text output dimension
 
 # Files to skip regardless of extension
