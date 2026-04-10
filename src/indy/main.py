@@ -12,20 +12,32 @@ console = Console()
 
 @indy_app.command('status')
 def status():
-    """Show index health: repos indexed, file counts, last run."""
+    """Show index health: repos indexed, file counts, last run, errors."""
     stats = service.get_status()
-    console.print(f'[bold]Files indexed:[/bold] {stats["total_files"]}')
+    repo_label = f'[dim](across {stats["repo_count"]} repos)[/dim]' if stats['repo_count'] else ''
+    console.print(f'[bold]Files indexed:[/bold] {stats["total_files"]}  {repo_label}')
     console.print(f'[bold]Total chunks:[/bold]  {stats["total_chunks"]}')
-    if stats['error_files']:
-        console.print(f'[bold red]Error files:[/bold red]   {stats["error_files"]}')
 
     last = stats.get('last_run')
     if last:
         console.print()
         console.print(f'[bold]Last run:[/bold] {last["repo"]} @ {last["started_at"]}')
-        console.print(f'  updated {last["files_updated"]} files, added {last["chunks_added"]} chunks')
+        console.print(f'  scanned {last["files_scanned"]}, updated {last["files_updated"]}, +{last["chunks_added"]} chunks')
         if last['error']:
-            console.print(f'  [red]error: {last["error"]}[/red]')
+            console.print(f'  [red]run error: {last["error"]}[/red]')
+
+    errors = stats.get('error_file_details', [])
+    if errors:
+        console.print()
+        console.print(f'[bold red]Error files: {len(errors)}[/bold red]')
+        for ef in errors:
+            # Strip the leading "error: " prefix stored in the status column
+            msg = ef['status'].removeprefix('error: ')
+            # Truncate long messages so output stays readable
+            if len(msg) > 80:
+                msg = msg[:77] + '...'
+            console.print(f'  [red]✗[/red] [dim]{ef["repo"]}[/dim]  {ef["file_path"]}')
+            console.print(f'    [dim]{msg}[/dim]')
 
 
 @indy_app.command('index')

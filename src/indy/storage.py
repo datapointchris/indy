@@ -194,15 +194,25 @@ def finish_index_run(conn: sqlite3.Connection, run_id: int, data: dict) -> None:
 # ── reporting ─────────────────────────────────────────────────────────────────
 
 
+def get_error_files(conn: sqlite3.Connection) -> list[dict]:
+    """Return all files whose last index attempt did not succeed."""
+    rows = conn.execute(
+        "SELECT repo, file_path, status, indexed_at FROM indexed_file WHERE status != 'ok' ORDER BY repo, file_path"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_index_stats(conn: sqlite3.Connection) -> dict:
     total_files = conn.execute("SELECT COUNT(*) FROM indexed_file WHERE status = 'ok'").fetchone()[0]
+    repo_count = conn.execute("SELECT COUNT(DISTINCT repo) FROM indexed_file WHERE status = 'ok'").fetchone()[0]
     total_chunks = conn.execute('SELECT COUNT(*) FROM chunk').fetchone()[0]
     error_files = conn.execute("SELECT COUNT(*) FROM indexed_file WHERE status != 'ok'").fetchone()[0]
     last_run = conn.execute(
-        'SELECT repo, started_at, finished_at, files_updated, chunks_added, error FROM index_run ORDER BY id DESC LIMIT 1'
+        'SELECT repo, started_at, finished_at, files_scanned, files_updated, chunks_added, error FROM index_run ORDER BY id DESC LIMIT 1'
     ).fetchone()
     return {
         'total_files': total_files,
+        'repo_count': repo_count,
         'total_chunks': total_chunks,
         'error_files': error_files,
         'last_run': dict(last_run) if last_run else None,

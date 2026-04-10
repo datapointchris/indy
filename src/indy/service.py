@@ -26,6 +26,7 @@ from indy.storage import delete_file_chunks
 from indy.storage import finish_index_run
 from indy.storage import get_chunks_by_symbol
 from indy.storage import get_db
+from indy.storage import get_error_files
 from indy.storage import get_index_stats
 from indy.storage import get_indexed_file
 from indy.storage import get_indexed_repos
@@ -216,7 +217,12 @@ def get_file_content(file_path: str) -> str | None:
 def get_status() -> dict:
     conn = get_db()
     try:
-        return get_index_stats(conn)
+        stats = get_index_stats(conn)
+        if stats['error_files']:
+            stats['error_file_details'] = get_error_files(conn)
+        else:
+            stats['error_file_details'] = []
+        return stats
     finally:
         conn.close()
 
