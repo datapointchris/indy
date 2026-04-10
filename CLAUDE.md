@@ -8,8 +8,8 @@ Local-first: sqlite-vec + ollama. No external APIs, no separate vector DB proces
 ```yaml
 storage.py     Pure SQLite + sqlite-vec access. No business logic.
                Only layer that touches the DB or serializes embeddings.
-service.py     All meaningful operations: index_path, search, search_symbol, refresh.
-               CLI and MCP are thin consumers of this layer.
+service.py     All meaningful operations: index_path, search, search_symbol, refresh,
+               get_dependencies. CLI and MCP are thin consumers of this layer.
 chunker.py     Chunking strategies per content type:
                - Python: AST (function/class/method boundaries)
                - Go/TS/TSX/Rust: tree-sitter AST (same granularity)
@@ -26,15 +26,18 @@ mcp/server.py  FastMCP tools — thin wrappers calling service.py.
 
 ## Storage
 
-Two tables + one virtual table in `~/dev/indy/indy.db` (SQLite, WAL mode):
+Three tables + one virtual table in `~/dev/indy/indy.db` (SQLite, WAL mode):
 
 ```yaml
-indexed_file    Manifest: one row per file. Tracks mtime, sha256 hash, chunk count, status.
-                Re-indexing is skipped when content_hash is unchanged.
-index_run       Audit trail: one row per index run with file/chunk counts and errors.
-chunk           Chunk text + metadata (file_path, repo, language, symbol_name, symbol_type, module).
-vec_chunks      sqlite-vec virtual table. rowid matches chunk.id.
-                distance_metric=cosine — required for nomic-embed-text.
+indexed_file      Manifest: one row per file. Tracks mtime, sha256 hash, chunk count, status.
+                  Re-indexing is skipped when content_hash is unchanged.
+index_run         Audit trail: one row per index run with file/chunk counts and errors.
+chunk             Chunk text + metadata (file_path, repo, language, symbol_name, symbol_type, module).
+vec_chunks        sqlite-vec virtual table. rowid matches chunk.id.
+                  distance_metric=cosine — required for nomic-embed-text.
+symbol_reference  Call graph: one row per reference (import/call/inherit) extracted during indexing.
+                  Columns: source_file, source_symbol, target_symbol, target_module, ref_type.
+                  Python-only. Indexed on source_file and target_symbol for fast caller/callee lookup.
 ```
 
 Override data dir: `INDY_DIR` env var (default `~/dev/indy/`).
@@ -64,6 +67,10 @@ Always skip: `.git/ node_modules/ __pycache__ .venv/ dist/ build/` dirs; `*.lock
   stored chunk text. Always up to date; no storage overhead.
 - **No git post-commit hook** — on-demand `indy index` + forge die covers the use case.
   Per-repo hook management adds maintenance overhead for marginal gain.
+- **symbol_reference is Python-only** — tree-sitter already parses Go/TS/Rust for chunking;
+  reference extraction for those languages is deferred. Python AST covers the primary use case.
+- **target_module captured for attribute calls** — `storage.get_db()` stores target_module="storage",
+  helping disambiguate when multiple functions share a name across modules.
 
 ## CLI
 
@@ -83,7 +90,7 @@ indy repos                     # per-repo file/chunk counts
 claude mcp add indy -- python -m indy.mcp
 ```
 
-Tools: `indy_search`, `indy_search_symbol`, `indy_get_file`, `indy_list_repos`, `indy_status`, `indy_refresh`.
+Tools: `indy_search`, `indy_search_symbol`, `indy_get_file`, `indy_list_repos`, `indy_status`, `indy_refresh`, `indy_get_dependencies`.
 
 ## Batch Re-indexing
 

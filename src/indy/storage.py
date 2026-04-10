@@ -59,6 +59,17 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
             embedding float[{EMBEDDING_DIM}] distance_metric=cosine
         );
+
+        CREATE TABLE IF NOT EXISTS symbol_reference (
+            id            INTEGER PRIMARY KEY,
+            source_file   TEXT NOT NULL,
+            source_symbol TEXT,
+            target_symbol TEXT NOT NULL,
+            target_module TEXT,
+            ref_type      TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_symref_source ON symbol_reference(source_file);
+        CREATE INDEX IF NOT EXISTS idx_symref_target ON symbol_reference(target_symbol);
     """)
     conn.commit()
 
@@ -232,4 +243,63 @@ def get_indexed_repos(conn: sqlite3.Connection) -> list[dict]:
         ORDER BY repo
         """
     ).fetchall()
+    return [dict(row) for row in rows]
+
+
+# ── symbol_reference ──────────────────────────────────────────────────────────
+
+
+def delete_file_references(conn: sqlite3.Connection, file_path: str) -> None:
+    conn.execute('DELETE FROM symbol_reference WHERE source_file = ?', (file_path,))
+
+
+def insert_references(conn: sqlite3.Connection, refs: list[dict]) -> None:
+    conn.executemany(
+        """
+        INSERT INTO symbol_reference (source_file, source_symbol, target_symbol, target_module, ref_type)
+        VALUES (:source_file, :source_symbol, :target_symbol, :target_module, :ref_type)
+        """,
+        refs,
+    )
+
+
+def get_symbol_callers(conn: sqlite3.Connection, target_symbol: str, repo: str | None = None) -> list[dict]:
+    """Return all references that call target_symbol (i.e. what calls it)."""
+    if repo:
+        rows = conn.execute(
+            """
+            SELECT sr.*
+            FROM symbol_reference sr
+            JOIN indexed_file f ON sr.source_file = f.file_path
+            WHERE sr.target_symbol = ? AND sr.ref_type = 'call' AND f.repo = ?
+            ORDER BY sr.source_file, sr.source_symbol
+            """,
+            (target_symbol, repo),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM symbol_reference WHERE target_symbol = ? AND ref_type = 'call' ORDER BY source_file, source_symbol",
+            (target_symbol,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_symbol_callees(conn: sqlite3.Connection, source_symbol: str, repo: str | None = None) -> list[dict]:
+    """Return all calls made by source_symbol (i.e. what it calls)."""
+    if repo:
+        rows = conn.execute(
+            """
+            SELECT sr.*
+            FROM symbol_reference sr
+            JOIN indexed_file f ON sr.source_file = f.file_path
+            WHERE sr.source_symbol = ? AND sr.ref_type = 'call' AND f.repo = ?
+            ORDER BY sr.target_symbol
+            """,
+            (source_symbol, repo),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM symbol_reference WHERE source_symbol = ? AND ref_type = 'call' ORDER BY target_symbol",
+            (source_symbol,),
+        ).fetchall()
     return [dict(row) for row in rows]

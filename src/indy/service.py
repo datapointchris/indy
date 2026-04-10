@@ -3,6 +3,7 @@ CLI and MCP are thin wrappers around these functions."""
 
 import hashlib
 import os
+from dataclasses import asdict
 from datetime import UTC
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ import httpx
 
 from indy.chunker import chunk_file
 from indy.chunker import detect_language
+from indy.chunker import extract_references
 from indy.config import CODE_EXTENSIONS
 from indy.config import CONFIG_EXTENSIONS
 from indy.config import DOC_EXTENSIONS
@@ -23,6 +25,7 @@ from indy.repos import get_repo_by_name
 from indy.repos import load_active_repos
 from indy.repos import load_extra_paths
 from indy.storage import delete_file_chunks
+from indy.storage import delete_file_references
 from indy.storage import finish_index_run
 from indy.storage import get_chunks_by_symbol
 from indy.storage import get_db
@@ -30,8 +33,11 @@ from indy.storage import get_error_files
 from indy.storage import get_index_stats
 from indy.storage import get_indexed_file
 from indy.storage import get_indexed_repos
+from indy.storage import get_symbol_callees
+from indy.storage import get_symbol_callers
 from indy.storage import insert_chunk
 from indy.storage import insert_chunk_embedding
+from indy.storage import insert_references
 from indy.storage import search_chunks
 from indy.storage import start_index_run
 from indy.storage import upsert_indexed_file
@@ -96,6 +102,11 @@ def index_path(root: Path, repo_name: str) -> dict:
                         continue
 
                     delete_file_chunks(conn, str(filepath))
+                    delete_file_references(conn, str(filepath))
+
+                    refs = extract_references(str(filepath), content)
+                    if refs:
+                        insert_references(conn, [asdict(r) for r in refs])
 
                     file_chunks_added = 0
                     for chunk in chunks:
@@ -247,3 +258,22 @@ def refresh(repo: str | None = None) -> dict:
         'chunks_added': sum(r['chunks_added'] for r in results),
         'errors': [r['error'] for r in results if r['error']],
     }
+
+
+def get_dependencies(symbol_name: str, repo: str | None = None, direction: str = 'both') -> dict:
+    """Return callers and/or callees of a symbol from the reference table.
+
+    direction='callers' → what calls symbol_name
+    direction='callees' → what symbol_name calls
+    direction='both'    → both
+    """
+    conn = get_db()
+    try:
+        result: dict = {}
+        if direction in ('callers', 'both'):
+            result['callers'] = get_symbol_callers(conn, symbol_name, repo=repo)
+        if direction in ('callees', 'both'):
+            result['callees'] = get_symbol_callees(conn, symbol_name, repo=repo)
+        return result
+    finally:
+        conn.close()

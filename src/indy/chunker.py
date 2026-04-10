@@ -58,6 +58,15 @@ class Chunk:
     module: str | None = None
 
 
+@dataclass
+class Reference:
+    source_file: str
+    source_symbol: str | None  # None = module-level (imports, class-level code)
+    target_symbol: str
+    target_module: str | None  # best-effort: the object/module the symbol is called on
+    ref_type: str  # "call" | "import" | "inherit"
+
+
 def detect_language(file_path: str) -> str | None:
     return LANGUAGE_MAP.get(Path(file_path).suffix.lower())
 
@@ -399,3 +408,114 @@ def chunk_treesitter(file_path: str, content: str, repo: str, language: str | No
     _ts_walk(tree.root_node, content.splitlines(), file_path, repo, language, extract_types, chunks)
 
     return chunks if chunks else chunk_code(file_path, content, repo, language)
+
+
+# ── Reference extraction ──────────────────────────────────────────────────────
+
+
+def _resolve_attr_name(node: ast.expr) -> tuple[str, str | None]:
+    """Return (symbol_name, module_hint) for a Call's func node.
+
+    For `storage.search_chunks(...)` → ("search_chunks", "storage").
+    For `get_db()`                  → ("get_db", None).
+    For chained `a.b.c()`          → ("c", "b").
+    Returns ("", None) when the expression is not resolvable (e.g. lambdas).
+    """
+    if isinstance(node, ast.Name):
+        return node.id, None
+    if isinstance(node, ast.Attribute):
+        module_hint = node.value.id if isinstance(node.value, ast.Name) else None
+        return node.attr, module_hint
+    return '', None
+
+
+class _ReferenceExtractor(ast.NodeVisitor):
+    """Walk a Python AST and collect symbol references with caller context."""
+
+    def __init__(self, file_path: str) -> None:
+        self.file_path = file_path
+        self.refs: list[Reference] = []
+        self._context: list[str] = []  # class/function name stack
+
+    @property
+    def _current_symbol(self) -> str | None:
+        return '.'.join(self._context) if self._context else None
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            self.refs.append(
+                Reference(
+                    source_file=self.file_path,
+                    source_symbol=self._current_symbol,
+                    target_symbol=alias.asname or alias.name,
+                    target_module=None,
+                    ref_type='import',
+                )
+            )
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        module = node.module or ''
+        for alias in node.names:
+            self.refs.append(
+                Reference(
+                    source_file=self.file_path,
+                    source_symbol=self._current_symbol,
+                    target_symbol=alias.asname or alias.name,
+                    target_module=module,
+                    ref_type='import',
+                )
+            )
+        self.generic_visit(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        for base in node.bases:
+            name, module_hint = _resolve_attr_name(base)
+            if name:
+                self.refs.append(
+                    Reference(
+                        source_file=self.file_path,
+                        source_symbol=self._current_symbol,
+                        target_symbol=name,
+                        target_module=module_hint,
+                        ref_type='inherit',
+                    )
+                )
+        self._context.append(node.name)
+        self.generic_visit(node)
+        self._context.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._context.append(node.name)
+        self.generic_visit(node)
+        self._context.pop()
+
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+
+    def visit_Call(self, node: ast.Call) -> None:
+        name, module_hint = _resolve_attr_name(node.func)
+        if name:
+            self.refs.append(
+                Reference(
+                    source_file=self.file_path,
+                    source_symbol=self._current_symbol,
+                    target_symbol=name,
+                    target_module=module_hint,
+                    ref_type='call',
+                )
+            )
+        self.generic_visit(node)
+
+
+def extract_references(file_path: str, content: str) -> list[Reference]:
+    """Extract symbol references from a Python file.
+    Returns an empty list for non-Python files or files that fail to parse."""
+    if not file_path.endswith('.py'):
+        return []
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return []
+    extractor = _ReferenceExtractor(file_path)
+    extractor.visit(tree)
+    return extractor.refs

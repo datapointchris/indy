@@ -19,14 +19,15 @@ indy repos                     # list indexed repos with chunk counts
 ## Architecture
 
 ```yaml
-storage.py     SQLite manifest (indexed_file, index_run) + sqlite-vec vectors
-service.py     All logic: index_path, search, search_symbol, refresh
-chunker.py     Python AST chunking + recursive code splitter + prose splitter
+storage.py     SQLite manifest (indexed_file, index_run, symbol_reference) + sqlite-vec vectors
+service.py     All logic: index_path, search, search_symbol, refresh, get_dependencies
+chunker.py     Python AST chunking + tree-sitter (Go/TS/Rust) + prose/code splitters
+               + Python reference extraction (call graph)
 repos.py       Reads ~/dev/repos.json, returns active repos with resolved paths
 config.py      Constants and env var overrides (INDY_DIR, OLLAMA_HOST, etc.)
 main.py        Thin Typer CLI wrappers over service.py
 mcp/server.py  FastMCP tools: indy_search, indy_search_symbol, indy_get_file,
-               indy_list_repos, indy_status, indy_refresh
+               indy_list_repos, indy_status, indy_refresh, indy_get_dependencies
 ```
 
 ## MCP Setup

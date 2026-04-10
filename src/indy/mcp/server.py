@@ -54,3 +54,18 @@ def indy_refresh(repo: str | None = None) -> str:
     """Trigger incremental re-index of a repo or all repos.
     Only re-embeds files whose content has changed. Safe to call during a session."""
     return json.dumps(service.refresh(repo=repo))
+
+
+@mcp.tool()
+def indy_get_dependencies(symbol_name: str, repo: str | None = None, direction: str = 'both') -> str:
+    """Find what calls a symbol or what a symbol calls, using the reference graph.
+
+    direction options:
+      'callers' — what other symbols call symbol_name
+      'callees' — what symbol_name calls
+      'both'    — both directions (default)
+
+    Use after indy_search_symbol to understand a function's role and impact in the codebase.
+    Only covers Python files; results are populated after indexing."""
+    result = service.get_dependencies(symbol_name, repo=repo, direction=direction)
+    return json.dumps(result)
