@@ -144,7 +144,7 @@ def streamline(
     col_width = max(col_width, 2)
     slot_width = col_width + 1
 
-    heights = [max(1, round((v / max_val) * height)) if v > 0 else 0 for v in values]
+    heights = [max(1, round((v / max_val) * height)) for v in values]
     n = len(heights)
 
     con.print(f'\n  [bold]{title}[/bold]')
@@ -162,7 +162,7 @@ def streamline(
         line = Text(f'  {label:>5} │ ')
 
         for i, h in enumerate(heights):
-            if row == h and h > 0:
+            if row == h:
                 line.append('─' * col_width, style=color)
             else:
                 line.append(' ' * col_width)
