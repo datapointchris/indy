@@ -1,3 +1,7 @@
+import importlib.metadata
+import json
+import re
+import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -265,6 +269,54 @@ def repos():
     for r in repo_list:
         table.add_row(r['repo'], str(r['file_count']), str(r['chunk_count']), r['last_indexed'])
     console.print(table)
+
+
+@indy_app.command('update')
+def update():
+    """Reinstall the latest version of indy from GitHub."""
+    try:
+        current_version = importlib.metadata.version('indy')
+    except importlib.metadata.PackageNotFoundError:
+        current_version = 'unknown'
+
+    current_hash = _get_installed_commit_hash()
+    hash_display = f' @ {current_hash[:8]}' if current_hash else ''
+    console.print(f'Current version: [cyan]v{current_version}{hash_display}[/cyan]')
+
+    with console.status('Updating from GitHub...'):
+        result = subprocess.run(  # nosec B603 B607
+            ['uv', 'tool', 'install', '--reinstall', 'git+https://github.com/datapointchris/indy'],
+            capture_output=True,
+            text=True,
+        )
+
+    if result.returncode != 0:
+        console.print(f'[red]Update failed:[/red]\n{result.stderr}')
+        raise typer.Exit(1)
+
+    uv_output = result.stderr + result.stdout
+    hash_match = re.search(r'Updated.*indy\s+\(([0-9a-f]{8,40})\)', uv_output)
+    new_hash = hash_match.group(1) if hash_match else None
+
+    if current_hash and new_hash:
+        if current_hash.startswith(new_hash) or new_hash.startswith(current_hash):
+            console.print(f'Already at latest (v{current_version} @ {new_hash[:8]}).')
+        else:
+            console.print(f'[green]Updated: {current_hash[:8]} → {new_hash[:8]}[/green]')
+    else:
+        console.print('[green]Updated successfully.[/green]')
+
+
+def _get_installed_commit_hash() -> str | None:
+    """Read the git commit hash from indy's installed dist-info."""
+    try:
+        dist = importlib.metadata.distribution('indy')
+        direct_url_text = dist.read_text('direct_url.json')
+        if direct_url_text:
+            return json.loads(direct_url_text).get('vcs_info', {}).get('commit_id')
+    except Exception:
+        return None
+    return None
 
 
 @indy_app.command('mcp')
