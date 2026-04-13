@@ -1,9 +1,16 @@
 import time
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.progress import BarColumn
+from rich.progress import MofNCompleteColumn
+from rich.progress import Progress
+from rich.progress import SpinnerColumn
+from rich.progress import TaskID
+from rich.progress import TextColumn
 from rich.table import Table
 
 import indy.service as service
@@ -59,29 +66,46 @@ def index(
     """Index a path or repo into the semantic search store."""
     t0 = time.perf_counter()
 
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn('[bold]{task.description}[/bold]'),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TextColumn('{task.fields[current_file]}'),
+        console=console,
+    )
+
+    def make_progress_callback(task_id: TaskID) -> Callable[[int, int, str], None]:
+        def on_progress(files_scanned: int, total_files: int, current_file: str) -> None:
+            progress.update(task_id, total=total_files, completed=files_scanned, current_file=current_file)
+
+        return on_progress
+
     if path:
         root = Path(path).expanduser().resolve()
         if not root.exists():
             console.print(f'[red]Path not found: {root}[/red]')
             raise typer.Exit(1)
         repo_name = root.name
-        console.print(f'Indexing [bold]{root}[/bold] as repo [bold]{repo_name}[/bold]...')
-        result = service.index_path(root, repo_name)
+        with progress:
+            task_id = progress.add_task(repo_name, total=None, current_file='')
+            result = service.index_path(root, repo_name, on_progress=make_progress_callback(task_id))
         print_index_result(result)
 
     elif repo:
-        console.print(f'Indexing repo [bold]{repo}[/bold]...')
-        try:
-            result = service.index_repo(repo)
-        except ValueError as exc:
-            console.print(f'[red]{exc}[/red]')
-            raise typer.Exit(1) from exc
+        with progress:
+            task_id = progress.add_task(repo, total=None, current_file='')
+            try:
+                result = service.index_repo(repo, on_progress=make_progress_callback(task_id))
+            except ValueError as exc:
+                console.print(f'[red]{exc}[/red]')
+                raise typer.Exit(1) from exc
         print_index_result(result)
 
     else:
-        # Default: index all active repos
-        console.print('Indexing all active repos...')
-        results = service.index_all()
+        with progress:
+            task_id = progress.add_task('all repos', total=None, current_file='')
+            results = service.index_all(on_progress=make_progress_callback(task_id))
         for result in results:
             print_index_result(result)
         total_updated = sum(r['files_updated'] for r in results)

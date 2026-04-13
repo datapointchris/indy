@@ -3,6 +3,7 @@ CLI and MCP are thin wrappers around these functions."""
 
 import hashlib
 import os
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC
 from datetime import datetime
@@ -65,8 +66,23 @@ def _content_hash(content: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
-def index_path(root: Path, repo_name: str) -> dict:
-    """Walk root, embed changed files, update the index manifest. Returns a stats dict."""
+def count_indexable_files(root: Path) -> int:
+    """Count files that would be indexed without reading them."""
+    count = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for filename in filenames:
+            if _should_index(Path(dirpath) / filename):
+                count += 1
+    return count
+
+
+def index_path(root: Path, repo_name: str, on_progress: Callable[[int, int, str], None] | None = None) -> dict:
+    """Walk root, embed changed files, update the index manifest. Returns a stats dict.
+
+    on_progress(files_scanned, total_files, current_file) is called before processing each file.
+    """
+    total_files = count_indexable_files(root) if on_progress else 0
     conn = get_db()
     now = datetime.now(UTC).isoformat()
     run_id = start_index_run(conn, repo_name, now)
@@ -87,6 +103,8 @@ def index_path(root: Path, repo_name: str) -> dict:
                     continue
 
                 files_scanned += 1
+                if on_progress:
+                    on_progress(files_scanned, total_files, filename)
                 db_path = compact_path(str(filepath))
 
                 try:
@@ -189,17 +207,17 @@ def index_path(root: Path, repo_name: str) -> dict:
     }
 
 
-def index_repo(repo_name: str) -> dict:
+def index_repo(repo_name: str, on_progress: Callable[[int, int, str], None] | None = None) -> dict:
     repo = get_repo_by_name(repo_name)
     if repo is None:
         raise ValueError(f'Repo {repo_name!r} not found in active repos')
-    return index_path(repo['path'], repo_name)
+    return index_path(repo['path'], repo_name, on_progress=on_progress)
 
 
-def index_all() -> list[dict]:
+def index_all(on_progress: Callable[[int, int, str], None] | None = None) -> list[dict]:
     """Index all active repos from repos.json plus configured extra paths."""
-    results = [index_path(repo['path'], repo['name']) for repo in load_active_repos()]
-    results += [index_path(ep['path'], ep['name']) for ep in load_extra_paths()]
+    results = [index_path(repo['path'], repo['name'], on_progress=on_progress) for repo in load_active_repos()]
+    results += [index_path(ep['path'], ep['name'], on_progress=on_progress) for ep in load_extra_paths()]
     return results
 
 
