@@ -21,6 +21,8 @@ from indy.config import OLLAMA_HOST
 from indy.config import OLLAMA_MODEL
 from indy.config import SKIP_DIRS
 from indy.config import SKIP_FILES
+from indy.config import compact_path
+from indy.config import expand_path
 from indy.repos import get_repo_by_name
 from indy.repos import load_active_repos
 from indy.repos import load_extra_paths
@@ -85,26 +87,27 @@ def index_path(root: Path, repo_name: str) -> dict:
                     continue
 
                 files_scanned += 1
+                db_path = compact_path(str(filepath))
 
                 try:
                     content = filepath.read_text(encoding='utf-8', errors='ignore')
                     mtime = filepath.stat().st_mtime
                     content_hash = _content_hash(content)
 
-                    existing = get_indexed_file(conn, str(filepath))
+                    existing = get_indexed_file(conn, db_path)
                     if existing and existing['content_hash'] == content_hash:
                         continue  # unchanged — skip re-embedding
 
                     language = detect_language(str(filepath))
-                    chunks = chunk_file(str(filepath), content, repo_name)
+                    chunks = chunk_file(db_path, content, repo_name)
 
                     if not chunks:
                         continue
 
-                    delete_file_chunks(conn, str(filepath))
-                    delete_file_references(conn, str(filepath))
+                    delete_file_chunks(conn, db_path)
+                    delete_file_references(conn, db_path)
 
-                    refs = extract_references(str(filepath), content)
+                    refs = extract_references(db_path, content)
                     if refs:
                         insert_references(conn, [asdict(r) for r in refs])
 
@@ -114,7 +117,7 @@ def index_path(root: Path, repo_name: str) -> dict:
                         chunk_id = insert_chunk(
                             conn,
                             {
-                                'file_path': str(filepath),
+                                'file_path': db_path,
                                 'repo': repo_name,
                                 'language': language,
                                 'symbol_name': chunk.symbol_name,
@@ -130,7 +133,7 @@ def index_path(root: Path, repo_name: str) -> dict:
                         conn,
                         {
                             'repo': repo_name,
-                            'file_path': str(filepath),
+                            'file_path': db_path,
                             'language': language,
                             'mtime': mtime,
                             'content_hash': content_hash,
@@ -148,7 +151,7 @@ def index_path(root: Path, repo_name: str) -> dict:
                         conn,
                         {
                             'repo': repo_name,
-                            'file_path': str(filepath),
+                            'file_path': db_path,
                             'language': detect_language(str(filepath)),
                             'mtime': filepath.stat().st_mtime if filepath.exists() else 0.0,
                             'content_hash': '',
@@ -200,11 +203,19 @@ def index_all() -> list[dict]:
     return results
 
 
+def expand_result_paths(results: list[dict], key: str = 'file_path') -> list[dict]:
+    """Expand ~-prefixed paths in a list of result dicts back to absolute paths."""
+    for r in results:
+        if key in r:
+            r[key] = expand_path(r[key])
+    return results
+
+
 def search(query: str, repo: str | None = None, language: str | None = None, limit: int = 10) -> list[dict]:
     embedding = embed_text(query)
     conn = get_db()
     try:
-        return search_chunks(conn, embedding, repo=repo, language=language, limit=limit)
+        return expand_result_paths(search_chunks(conn, embedding, repo=repo, language=language, limit=limit))
     finally:
         conn.close()
 
@@ -212,14 +223,14 @@ def search(query: str, repo: str | None = None, language: str | None = None, lim
 def search_symbol(name: str, repo: str | None = None) -> list[dict]:
     conn = get_db()
     try:
-        return get_chunks_by_symbol(conn, name, repo=repo)
+        return expand_result_paths(get_chunks_by_symbol(conn, name, repo=repo))
     finally:
         conn.close()
 
 
 def get_file_content(file_path: str) -> str | None:
     """Read a file directly from disk. Verifies the file exists; returns None if not."""
-    path = Path(file_path)
+    path = Path(expand_path(file_path))
     if not path.exists():
         return None
     return path.read_text(encoding='utf-8', errors='ignore')
@@ -230,8 +241,7 @@ def get_status() -> dict:
     try:
         stats = get_index_stats(conn)
         if stats['error_files']:
-            all_errors = get_error_files(conn)
-            stats['error_file_details'] = [e for e in all_errors if Path(e['file_path']).exists()]
+            stats['error_file_details'] = expand_result_paths(get_error_files(conn))
         else:
             stats['error_file_details'] = []
         return stats
@@ -272,9 +282,9 @@ def get_dependencies(symbol_name: str, repo: str | None = None, direction: str =
     try:
         result: dict = {}
         if direction in ('callers', 'both'):
-            result['callers'] = get_symbol_callers(conn, symbol_name, repo=repo)
+            result['callers'] = expand_result_paths(get_symbol_callers(conn, symbol_name, repo=repo), key='source_file')
         if direction in ('callees', 'both'):
-            result['callees'] = get_symbol_callees(conn, symbol_name, repo=repo)
+            result['callees'] = expand_result_paths(get_symbol_callees(conn, symbol_name, repo=repo), key='source_file')
         return result
     finally:
         conn.close()

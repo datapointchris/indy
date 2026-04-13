@@ -28,6 +28,23 @@ CONFIG_EXTENSIONS = {'.yaml', '.yml', '.toml', '.json'}
 
 MAX_FILE_SIZE_BYTES = 500_000
 
+HOME_PREFIX = str(Path.home())
+
+
+def compact_path(absolute_path: str) -> str:
+    """Replace the home directory prefix with ~ for cross-machine portability."""
+    if absolute_path.startswith(HOME_PREFIX):
+        return '~' + absolute_path[len(HOME_PREFIX) :]
+    return absolute_path
+
+
+def expand_path(db_path: str) -> str:
+    """Expand a ~-prefixed path back to an absolute path for the current machine."""
+    if db_path.startswith('~/'):
+        return HOME_PREFIX + db_path[1:]
+    return db_path
+
+
 # Chunking
 CODE_CHUNK_SIZE = 600
 CODE_CHUNK_OVERLAP = 80
