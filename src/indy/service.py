@@ -2,7 +2,6 @@
 CLI and MCP are thin wrappers around these functions."""
 
 import hashlib
-import os
 import subprocess
 from collections.abc import Callable
 from dataclasses import asdict
@@ -99,10 +98,10 @@ def collect_indexable_files(root: Path) -> list[Path]:
         return files
 
     files = []
-    for dirpath, dirnames, filenames in os.walk(root):
+    for dirpath, dirnames, filenames in root.walk():
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for filename in filenames:
-            filepath = Path(dirpath) / filename
+            filepath = dirpath / filename
             if _should_index(filepath):
                 files.append(filepath)
     return files
