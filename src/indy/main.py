@@ -19,6 +19,7 @@ from rich.table import Table
 import indy.service as service
 from indy.charts import horizontal_bars
 from indy.charts import streamline
+from indy.repos import get_repo_by_name
 from indy.repos import load_active_repos
 from indy.repos import load_extra_paths
 
@@ -50,11 +51,14 @@ def status():
 
 @indy_app.command('index')
 def index(
-    path: str = typer.Argument(None, help='Path to index. Omit to index all repos from repos.json.'),
-    repo: str = typer.Option(None, '--repo', '-r', help='Repo name from repos.json.'),
-    all_repos: bool = typer.Option(False, '--all', help='Index all active repos from repos.json.'),
+    repo: str = typer.Argument(None, help='Repo name from repos.json. Omit to index all.'),
+    path: str = typer.Option(None, '--path', '-p', help='Arbitrary path to index.'),
 ):
-    """Index a path or repo into the semantic search store."""
+    """Index a repo or path into the semantic search store."""
+    if repo and path:
+        console.print('[red]Cannot specify both repo name and --path.[/red]')
+        raise typer.Exit(1)
+
     t0 = time.perf_counter()
 
     progress = Progress(
@@ -84,13 +88,12 @@ def index(
         print_index_result(result)
 
     elif repo:
+        if get_repo_by_name(repo) is None:
+            console.print(f'[red]Repo {repo!r} not found in repos.json.[/red]')
+            raise typer.Exit(1)
         with progress:
             task_id = progress.add_task(repo, total=None, current_file='')
-            try:
-                result = service.index_repo(repo, on_progress=make_progress_callback(task_id))
-            except ValueError as exc:
-                console.print(f'[red]{exc}[/red]')
-                raise typer.Exit(1) from exc
+            result = service.index_repo(repo, on_progress=make_progress_callback(task_id))
         print_index_result(result)
 
     else:
@@ -202,7 +205,10 @@ def stats(
     if repo:
         history = service.repo_scan_history(repo)
         if not history:
-            console.print(f'No scan history for {repo!r}.')
+            if get_repo_by_name(repo) is None:
+                console.print(f'[red]Repo {repo!r} not found in repos.json.[/red]')
+            else:
+                console.print(f'No scan history for {repo!r}. Run [bold]indy index {repo}[/bold] first.')
             raise typer.Exit(1)
 
         labels = [h['started_at'][5:10] for h in history]

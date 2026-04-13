@@ -91,8 +91,8 @@ For git repos, `.gitignore` is respected via `git ls-files`. Non-git paths fall 
 
 ```bash
 indy index                     # index all active repos + extra paths
-indy index --repo ichrisbirch  # single repo by name
-indy index ~/path/             # arbitrary path (uses dirname as label)
+indy index ichrisbirch         # single repo by name
+indy index --path ~/dir/       # arbitrary path (uses dirname as label)
 indy search "query"            # semantic search
 indy search "q" --repo R --language python --limit 20
 indy search "q" --owned        # only your repos (owner matches top-level)
