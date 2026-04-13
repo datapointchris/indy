@@ -96,7 +96,7 @@ def chunk_file(file_path: str, content: str, repo: str) -> list[Chunk]:
 # ── Python AST chunker ────────────────────────────────────────────────────────
 
 
-def _path_to_module(file_path: str) -> str | None:
+def path_to_module(file_path: str) -> str | None:
     """Convert a file path to a Python dotted module path, best effort."""
     parts = list(Path(file_path).with_suffix('').parts)
     if 'src' in parts:
@@ -105,11 +105,11 @@ def _path_to_module(file_path: str) -> str | None:
     return Path(file_path).stem
 
 
-def _extract_lines(lines: list[str], node: ast.AST) -> str:
+def extract_lines(lines: list[str], node: ast.AST) -> str:
     return '\n'.join(lines[node.lineno - 1 : node.end_lineno])  # type: ignore[attr-defined]
 
 
-def _split_large_function(
+def split_large_function(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
     lines: list[str],
     file_path: str,
@@ -122,7 +122,7 @@ def _split_large_function(
 
     if not nested:
         # No nested functions — truncate to 1500 chars rather than losing the symbol entirely
-        text = _extract_lines(lines, node)
+        text = extract_lines(lines, node)
         return [
             Chunk(
                 text=text[:1500],
@@ -154,7 +154,7 @@ def _split_large_function(
         )
 
     for nested_node in sorted(nested, key=lambda n: n.lineno):
-        text = _extract_lines(lines, nested_node)
+        text = extract_lines(lines, nested_node)
         chunks.append(
             Chunk(
                 text=text,
@@ -170,7 +170,7 @@ def _split_large_function(
     return chunks
 
 
-def _class_header_text(node: ast.ClassDef, lines: list[str]) -> str:
+def class_header_text(node: ast.ClassDef, lines: list[str]) -> str:
     """Return the class definition line + docstring + non-method body lines."""
     base_str = ', '.join(ast.unparse(b) for b in node.bases)
     header = [f'class {node.name}({base_str}):' if base_str else f'class {node.name}:']
@@ -178,7 +178,7 @@ def _class_header_text(node: ast.ClassDef, lines: list[str]) -> str:
     for item in node.body:
         if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef):
             continue
-        header.append(_extract_lines(lines, item))
+        header.append(extract_lines(lines, item))
 
     return '\n'.join(header)
 
@@ -192,14 +192,14 @@ def chunk_python(file_path: str, content: str, repo: str) -> list[Chunk]:
         return chunk_code(file_path, content, repo, language='python')
 
     lines = content.splitlines()
-    module = _path_to_module(file_path)
+    module = path_to_module(file_path)
     chunks: list[Chunk] = []
 
     for node in tree.body:
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            text = _extract_lines(lines, node)
+            text = extract_lines(lines, node)
             if len(text) > 1500:
-                chunks.extend(_split_large_function(node, lines, file_path, repo, module))
+                chunks.extend(split_large_function(node, lines, file_path, repo, module))
             else:
                 chunks.append(
                     Chunk(
@@ -215,7 +215,7 @@ def chunk_python(file_path: str, content: str, repo: str) -> list[Chunk]:
 
         elif isinstance(node, ast.ClassDef):
             # Class header chunk (docstring + class-level attributes, no methods)
-            header = _class_header_text(node, lines)
+            header = class_header_text(node, lines)
             if header.strip():
                 chunks.append(
                     Chunk(
@@ -232,9 +232,9 @@ def chunk_python(file_path: str, content: str, repo: str) -> list[Chunk]:
             # One chunk per method
             for item in node.body:
                 if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef):
-                    text = _extract_lines(lines, item)
+                    text = extract_lines(lines, item)
                     if len(text) > 1500:
-                        chunks.extend(_split_large_function(item, lines, file_path, repo, module, parent_name=node.name))
+                        chunks.extend(split_large_function(item, lines, file_path, repo, module, parent_name=node.name))
                     else:
                         chunks.append(
                             Chunk(
@@ -258,7 +258,7 @@ _CODE_DELIMITERS = ['\n\nfunc ', '\n\ndef ', '\nclass ', '\n\n', '\n', ' ']
 _PROSE_DELIMITERS = ['\n## ', '\n### ', '\n#### ', '\n\n', '\n']
 
 
-def _recursive_split(text: str, chunk_size: int, overlap: int, delimiters: list[str]) -> list[str]:
+def recursive_split(text: str, chunk_size: int, overlap: int, delimiters: list[str]) -> list[str]:
     """Split text using priority delimiters, targeting chunk_size with overlap between chunks."""
     if len(text) <= chunk_size:
         return [text] if text.strip() else []
@@ -291,7 +291,7 @@ def _recursive_split(text: str, chunk_size: int, overlap: int, delimiters: list[
         remaining_delimiters = delimiters[i + 1 :]
         for chunk in merged:
             if len(chunk) > chunk_size and remaining_delimiters:
-                result.extend(_recursive_split(chunk, chunk_size, overlap, remaining_delimiters))
+                result.extend(recursive_split(chunk, chunk_size, overlap, remaining_delimiters))
             else:
                 if chunk.strip():
                     result.append(chunk)
@@ -309,13 +309,13 @@ def _recursive_split(text: str, chunk_size: int, overlap: int, delimiters: list[
 
 def chunk_code(file_path: str, content: str, repo: str, language: str | None = None) -> list[Chunk]:
     """Recursive character splitter for non-Python code files."""
-    pieces = _recursive_split(content, CODE_CHUNK_SIZE, CODE_CHUNK_OVERLAP, _CODE_DELIMITERS)
+    pieces = recursive_split(content, CODE_CHUNK_SIZE, CODE_CHUNK_OVERLAP, _CODE_DELIMITERS)
     return [Chunk(text=piece, file_path=file_path, repo=repo, language=language, symbol_type='prose') for piece in pieces]
 
 
 def chunk_prose(file_path: str, content: str, repo: str, language: str | None) -> list[Chunk]:
     """Paragraph-aware chunker for Markdown and plain text."""
-    pieces = _recursive_split(content, PROSE_CHUNK_SIZE, PROSE_CHUNK_OVERLAP, _PROSE_DELIMITERS)
+    pieces = recursive_split(content, PROSE_CHUNK_SIZE, PROSE_CHUNK_OVERLAP, _PROSE_DELIMITERS)
     return [Chunk(text=piece, file_path=file_path, repo=repo, language=language, symbol_type='prose') for piece in pieces]
 
 
@@ -347,14 +347,14 @@ _TS_SYMBOL_TYPE_MAP: dict[str, str] = {
 }
 
 
-def _ts_symbol_name(node: '_Node') -> str | None:
+def ts_symbol_name(node: '_Node') -> str | None:
     name_node = node.child_by_field_name('name')
     if name_node is None or name_node.text is None:
         return None
     return name_node.text.decode('utf-8')
 
 
-def _ts_walk(
+def ts_walk(
     node: '_Node',
     lines: list[str],
     file_path: str,
@@ -377,7 +377,7 @@ def _ts_walk(
                     file_path=file_path,
                     repo=repo,
                     language=language,
-                    symbol_name=_ts_symbol_name(node),
+                    symbol_name=ts_symbol_name(node),
                     symbol_type=_TS_SYMBOL_TYPE_MAP.get(node.type, 'function'),
                 )
             )
@@ -385,7 +385,7 @@ def _ts_walk(
 
     for child in node.children:
         if child.is_named:
-            _ts_walk(child, lines, file_path, repo, language, extract_types, chunks)
+            ts_walk(child, lines, file_path, repo, language, extract_types, chunks)
 
 
 def chunk_treesitter(file_path: str, content: str, repo: str, language: str | None) -> list[Chunk]:
@@ -405,7 +405,7 @@ def chunk_treesitter(file_path: str, content: str, repo: str, language: str | No
     tree = parser.parse(bytes(content, 'utf-8'))
 
     chunks: list[Chunk] = []
-    _ts_walk(tree.root_node, content.splitlines(), file_path, repo, language, extract_types, chunks)
+    ts_walk(tree.root_node, content.splitlines(), file_path, repo, language, extract_types, chunks)
 
     return chunks if chunks else chunk_code(file_path, content, repo, language)
 
@@ -413,7 +413,7 @@ def chunk_treesitter(file_path: str, content: str, repo: str, language: str | No
 # ── Reference extraction ──────────────────────────────────────────────────────
 
 
-def _resolve_attr_name(node: ast.expr) -> tuple[str, str | None]:
+def resolve_attr_name(node: ast.expr) -> tuple[str, str | None]:
     """Return (symbol_name, module_hint) for a Call's func node.
 
     For `storage.search_chunks(...)` → ("search_chunks", "storage").
@@ -470,7 +470,7 @@ class _ReferenceExtractor(ast.NodeVisitor):
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         for base in node.bases:
-            name, module_hint = _resolve_attr_name(base)
+            name, module_hint = resolve_attr_name(base)
             if name:
                 self.refs.append(
                     Reference(
@@ -493,7 +493,7 @@ class _ReferenceExtractor(ast.NodeVisitor):
     visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
 
     def visit_Call(self, node: ast.Call) -> None:
-        name, module_hint = _resolve_attr_name(node.func)
+        name, module_hint = resolve_attr_name(node.func)
         if name:
             self.refs.append(
                 Reference(

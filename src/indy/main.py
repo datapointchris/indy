@@ -285,7 +285,7 @@ def update():
     except importlib.metadata.PackageNotFoundError:
         current_version = 'unknown'
 
-    current_hash = _get_installed_commit_hash()
+    current_hash = get_installed_commit_hash()
     hash_display = f' @ {current_hash[:8]}' if current_hash else ''
     console.print(f'Current version: [cyan]v{current_version}{hash_display}[/cyan]')
 
@@ -313,7 +313,7 @@ def update():
         console.print('[green]Updated successfully.[/green]')
 
 
-def _get_installed_commit_hash() -> str | None:
+def get_installed_commit_hash() -> str | None:
     """Read the git commit hash from indy's installed dist-info."""
     try:
         dist = importlib.metadata.distribution('indy')

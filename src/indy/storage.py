@@ -16,11 +16,11 @@ def get_db() -> sqlite3.Connection:
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
-    _init_schema(conn)
+    init_schema(conn)
     return conn
 
 
-def _init_schema(conn: sqlite3.Connection) -> None:
+def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(f"""
         CREATE TABLE IF NOT EXISTS indexed_file (
             id           INTEGER PRIMARY KEY,

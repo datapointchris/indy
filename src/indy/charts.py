@@ -98,9 +98,9 @@ def vertical_bars(
         line = Text(f'  {label:>5} │ ')
 
         for i, v in enumerate(values):
-            _append_bar_cell(line, v, max_val, height, row, color)
+            append_bar_cell(line, v, max_val, height, row, color)
             if second_values:
-                _append_bar_cell(line, second_values[i], max_val, height, row, second_color)
+                append_bar_cell(line, second_values[i], max_val, height, row, second_color)
             line.append(' ')
 
         con.print(line)
@@ -166,7 +166,7 @@ def streamline(
                 line.append('  ')
 
             if i < n - 1:
-                line.append(_transition_char(row, h, heights[i + 1], color))
+                line.append(transition_char(row, h, heights[i + 1], color))
 
         con.print(line)
 
@@ -179,7 +179,7 @@ def streamline(
     con.print(label_line)
 
 
-def _transition_char(row: int, h_left: int, h_right: int, color: str) -> Text:
+def transition_char(row: int, h_left: int, h_right: int, color: str) -> Text:
     """Return the 1-char transition between two adjacent data points."""
     h_top = max(h_left, h_right)
     h_bot = min(h_left, h_right)
@@ -211,7 +211,7 @@ def _transition_char(row: int, h_left: int, h_right: int, color: str) -> Text:
     return Text(' ')
 
 
-def _append_bar_cell(
+def append_bar_cell(
     line: Text,
     value: float,
     max_val: float,

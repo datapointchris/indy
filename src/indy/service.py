@@ -68,20 +68,20 @@ def embed_text(text: str) -> list[float]:
     return response.json()['embeddings'][0]
 
 
-def _should_index(path: Path) -> bool:
+def should_index(path: Path) -> bool:
     return path.suffix.lower() in _INDEXABLE_EXTENSIONS and path.name not in SKIP_FILES and path.stat().st_size <= MAX_FILE_SIZE_BYTES
 
 
-def _content_hash(content: str) -> str:
+def compute_content_hash(content: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
-def _is_in_skip_dir(filepath: Path, root: Path) -> bool:
+def is_in_skip_dir(filepath: Path, root: Path) -> bool:
     """Check if any path component between root and filepath is in SKIP_DIRS."""
     return bool(SKIP_DIRS & set(filepath.relative_to(root).parts))
 
 
-def _list_git_files(root: Path) -> list[str] | None:
+def list_git_files(root: Path) -> list[str] | None:
     """Return relative paths from git (tracked + untracked, excluding gitignored).
     Returns None if root is not inside a git repo."""
     result = subprocess.run(
@@ -97,12 +97,12 @@ def _list_git_files(root: Path) -> list[str] | None:
 
 def collect_indexable_files(root: Path) -> list[Path]:
     """Collect all files to index under root, respecting .gitignore for git repos."""
-    git_files = _list_git_files(root)
+    git_files = list_git_files(root)
     if git_files is not None:
         files = []
         for rel_path in git_files:
             filepath = root / rel_path
-            if filepath.exists() and not _is_in_skip_dir(filepath, root) and _should_index(filepath):
+            if filepath.exists() and not is_in_skip_dir(filepath, root) and should_index(filepath):
                 files.append(filepath)
         return files
 
@@ -111,7 +111,7 @@ def collect_indexable_files(root: Path) -> list[Path]:
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for filename in filenames:
             filepath = dirpath / filename
-            if _should_index(filepath):
+            if should_index(filepath):
                 files.append(filepath)
     return files
 
@@ -142,7 +142,7 @@ def index_path(root: Path, repo_name: str, on_progress: Callable[[int, int, str]
             try:
                 content = filepath.read_text(encoding='utf-8', errors='ignore')
                 mtime = filepath.stat().st_mtime
-                content_hash = _content_hash(content)
+                content_hash = compute_content_hash(content)
 
                 existing = get_indexed_file(conn, db_path)
                 if existing and existing['content_hash'] == content_hash:
