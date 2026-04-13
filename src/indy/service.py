@@ -47,12 +47,12 @@ _INDEXABLE_EXTENSIONS = CODE_EXTENSIONS | DOC_EXTENSIONS | CONFIG_EXTENSIONS
 
 def embed_text(text: str) -> list[float]:
     response = httpx.post(
-        f'{OLLAMA_HOST}/api/embeddings',
-        json={'model': OLLAMA_MODEL, 'prompt': text},
+        f'{OLLAMA_HOST}/api/embed',
+        json={'model': OLLAMA_MODEL, 'input': text},
         timeout=30.0,
     )
     response.raise_for_status()
-    return response.json()['embedding']
+    return response.json()['embeddings'][0]
 
 
 def _should_index(path: Path) -> bool:
