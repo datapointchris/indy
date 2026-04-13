@@ -14,7 +14,7 @@ from rich.table import Table
 
 import indy.service as service
 from indy.charts import horizontal_bars
-from indy.charts import vertical_bars
+from indy.charts import streamline
 from indy.repos import load_active_repos
 from indy.repos import load_extra_paths
 
@@ -199,7 +199,7 @@ def stats(
         files_updated = [float(h['files_updated'] or 0) for h in history]
         chunks_added = [float(h['chunks_added'] or 0) for h in history]
 
-        vertical_bars(
+        streamline(
             f'{repo} — files updated per scan',
             labels,
             files_updated,
@@ -207,7 +207,7 @@ def stats(
             height=10,
             console=console,
         )
-        vertical_bars(
+        streamline(
             f'{repo} — chunks added per scan',
             labels,
             chunks_added,

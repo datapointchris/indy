@@ -119,6 +119,98 @@ def vertical_bars(
     con.print(label_line)
 
 
+def streamline(
+    title: str,
+    labels: list[str],
+    values: list[float],
+    *,
+    color: str = 'cyan',
+    height: int = 10,
+    console: Console | None = None,
+) -> None:
+    """Render an area chart with box-drawing curves for smooth transitions.
+
+    Each data point gets 2 chars wide, with 1-char transition columns between
+    them using ╭╮╯╰│ for smooth curves. Area below the line is filled.
+    """
+    con = console or Console()
+    max_val = max(values) if values else 0
+    if max_val <= 0:
+        con.print(f'\n  [bold]{title}[/bold]')
+        con.print('    No data.')
+        return
+
+    heights = [max(1, round((v / max_val) * height)) if v > 0 else 0 for v in values]
+    n = len(heights)
+
+    con.print(f'\n  [bold]{title}[/bold]')
+
+    for row in range(height, 0, -1):
+        if row == height:
+            label = format_axis_label(max_val)
+        elif row == height // 2:
+            label = format_axis_label(max_val / 2)
+        elif row == 1:
+            label = '0'
+        else:
+            label = ''
+
+        line = Text(f'  {label:>5} │ ')
+
+        for i, h in enumerate(heights):
+            if row == h and h > 0:
+                line.append('──', style=color)
+            elif row < h:
+                line.append('██', style=color)
+            else:
+                line.append('  ')
+
+            if i < n - 1:
+                line.append(_transition_char(row, h, heights[i + 1], color))
+
+        con.print(line)
+
+    axis_width = n * 2 + (n - 1)
+    con.print(f'        └{"─" * (axis_width + 2)}')
+
+    label_line = Text('         ')
+    for lbl in labels:
+        label_line.append(f'{lbl[:3]:<3}')
+    con.print(label_line)
+
+
+def _transition_char(row: int, h_left: int, h_right: int, color: str) -> Text:
+    """Return the 1-char transition between two adjacent data points."""
+    h_top = max(h_left, h_right)
+    h_bot = min(h_left, h_right)
+
+    if h_left == h_right:
+        if row == h_left and h_left > 0:
+            return Text('─', style=color)
+        if row < h_left:
+            return Text('█', style=color)
+        return Text(' ')
+
+    if row > h_top or (row == h_top == 0):
+        return Text(' ')
+
+    if row == h_top:
+        char = '╮' if h_left > h_right else '╭'
+        return Text(char, style=color)
+
+    if h_bot < row < h_top:
+        return Text('│', style=color)
+
+    if row == h_bot and h_bot > 0:
+        char = '╰' if h_left > h_right else '╯'
+        return Text(char, style=color)
+
+    if row < h_bot:
+        return Text('█', style=color)
+
+    return Text(' ')
+
+
 def _append_bar_cell(
     line: Text,
     value: float,
