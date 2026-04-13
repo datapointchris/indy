@@ -18,6 +18,7 @@ chunker.py     Chunking strategies per content type:
                - Other code: recursive character splitter
 repos.py       Reads ~/dev/repos.json, returns active repos + configured extra paths.
 config.py      Constants and env var overrides (INDY_DIR, OLLAMA_HOST, OLLAMA_MODEL, etc.).
+charts.py      Terminal chart primitives (horizontal/vertical bars) using Rich + Unicode blocks.
 main.py        CLI entry points only — thin Typer shells calling service.py.
 mcp/server.py  FastMCP tools — thin wrappers calling service.py.
 ```
@@ -81,9 +82,12 @@ indy index --repo ichrisbirch  # single repo by name
 indy index ~/path/             # arbitrary path (uses dirname as label)
 indy search "query"            # semantic search
 indy search "q" --repo R --language python --limit 20
-indy status                    # health + error file details
-indy clear-errors              # remove error records (re-attempted on next index)
-indy repos                     # per-repo file/chunk counts
+indy status                    # health dashboard: totals, recent runs, error count
+indy errors                    # per-file error listing grouped by repo
+indy errors-clear              # remove error records (re-attempted on next index)
+indy stats                     # bar charts: files/chunks per repo, last indexed
+indy stats ichrisbirch         # scan history charts for a specific repo
+indy repos                     # per-repo file/chunk counts (table)
 ```
 
 ## MCP
