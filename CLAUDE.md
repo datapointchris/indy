@@ -56,6 +56,7 @@ Active repos from `~/dev/repos.json` plus paths in `EXTRA_PATHS_RAW` (default: `
 
 File inclusion: `.py .go .js .ts .tsx .sh .rs .rb` (code), `.md .rst .txt` (prose), `.yaml .yml .toml .json` (config).
 Always skip: `.git/ node_modules/ __pycache__ .venv/ dist/ build/` dirs; `*.lock` files; files > 500KB.
+For git repos, `.gitignore` is respected via `git ls-files`. Non-git paths fall back to directory walking.
 
 ## Key Decisions
 
@@ -81,6 +82,7 @@ indy index ~/path/             # arbitrary path (uses dirname as label)
 indy search "query"            # semantic search
 indy search "q" --repo R --language python --limit 20
 indy status                    # health + error file details
+indy clear-errors              # remove error records (re-attempted on next index)
 indy repos                     # per-repo file/chunk counts
 ```
 
