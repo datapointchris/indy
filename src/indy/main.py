@@ -9,7 +9,7 @@ from rich.table import Table
 import indy.service as service
 
 indy_app = typer.Typer(name='indy', no_args_is_help=True, help='Semantic search index for local codebases, docs, and notes.')
-console = Console()
+console = Console(highlight=False)
 
 
 @indy_app.command('status')
