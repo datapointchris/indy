@@ -41,7 +41,7 @@ mcp/server.py  FastMCP tools: indy_search, indy_search_symbol, indy_get_file,
 ## MCP Setup
 
 ```bash
-claude mcp add indy -- python -m indy.mcp
+claude mcp add indy -- indy-mcp
 ```
 
 ## Data

@@ -23,6 +23,7 @@ Repository = "https://github.com/datapointchris/indy"
 
 [project.scripts]
 indy = "indy.main:indy_app"
+indy-mcp = "indy.mcp.__main__:run"
 
 [dependency-groups]
 dev = [
@@ -97,7 +98,7 @@ force-single-line = true
 
 
 [build-system]
-requires = ["uv_build>=0.9.13,<0.11"]
+requires = ["uv_build>=0.9.13,<0.12"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]

@@ -109,7 +109,7 @@ indy repos                     # per-repo file/chunk counts (table)
 ## MCP
 
 ```bash
-claude mcp add indy -- python -m indy.mcp
+claude mcp add indy -- indy-mcp
 ```
 
 Tools: `indy_search`, `indy_search_symbol`, `indy_get_file`, `indy_list_repos`, `indy_status`, `indy_refresh`, `indy_get_dependencies`.
