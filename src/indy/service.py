@@ -3,6 +3,7 @@ CLI and MCP are thin wrappers around these functions."""
 
 import hashlib
 import os
+import subprocess
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC
@@ -66,15 +67,44 @@ def _content_hash(content: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
-def count_indexable_files(root: Path) -> int:
-    """Count files that would be indexed without reading them."""
-    count = 0
+def _is_in_skip_dir(filepath: Path, root: Path) -> bool:
+    """Check if any path component between root and filepath is in SKIP_DIRS."""
+    return bool(SKIP_DIRS & set(filepath.relative_to(root).parts))
+
+
+def _list_git_files(root: Path) -> list[str] | None:
+    """Return relative paths from git (tracked + untracked, excluding gitignored).
+    Returns None if root is not inside a git repo."""
+    result = subprocess.run(
+        ['git', 'ls-files', '--cached', '--others', '--exclude-standard'],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.splitlines()
+
+
+def collect_indexable_files(root: Path) -> list[Path]:
+    """Collect all files to index under root, respecting .gitignore for git repos."""
+    git_files = _list_git_files(root)
+    if git_files is not None:
+        files = []
+        for rel_path in git_files:
+            filepath = root / rel_path
+            if filepath.exists() and not _is_in_skip_dir(filepath, root) and _should_index(filepath):
+                files.append(filepath)
+        return files
+
+    files = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for filename in filenames:
-            if _should_index(Path(dirpath) / filename):
-                count += 1
-    return count
+            filepath = Path(dirpath) / filename
+            if _should_index(filepath):
+                files.append(filepath)
+    return files
 
 
 def index_path(root: Path, repo_name: str, on_progress: Callable[[int, int, str], None] | None = None) -> dict:
@@ -82,7 +112,8 @@ def index_path(root: Path, repo_name: str, on_progress: Callable[[int, int, str]
 
     on_progress(files_scanned, total_files, current_file) is called before processing each file.
     """
-    total_files = count_indexable_files(root) if on_progress else 0
+    indexable_files = collect_indexable_files(root)
+    total_files = len(indexable_files)
     conn = get_db()
     now = datetime.now(UTC).isoformat()
     run_id = start_index_run(conn, repo_name, now)
@@ -93,92 +124,84 @@ def index_path(root: Path, repo_name: str, on_progress: Callable[[int, int, str]
     run_error: str | None = None
 
     try:
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for filepath in indexable_files:
+            files_scanned += 1
+            if on_progress:
+                on_progress(files_scanned, total_files, filepath.name)
+            db_path = compact_path(str(filepath))
 
-            for filename in filenames:
-                filepath = Path(dirpath) / filename
+            try:
+                content = filepath.read_text(encoding='utf-8', errors='ignore')
+                mtime = filepath.stat().st_mtime
+                content_hash = _content_hash(content)
 
-                if not _should_index(filepath):
+                existing = get_indexed_file(conn, db_path)
+                if existing and existing['content_hash'] == content_hash:
+                    continue  # unchanged — skip re-embedding
+
+                language = detect_language(str(filepath))
+                chunks = chunk_file(db_path, content, repo_name)
+
+                if not chunks:
                     continue
 
-                files_scanned += 1
-                if on_progress:
-                    on_progress(files_scanned, total_files, filename)
-                db_path = compact_path(str(filepath))
+                delete_file_chunks(conn, db_path)
+                delete_file_references(conn, db_path)
 
-                try:
-                    content = filepath.read_text(encoding='utf-8', errors='ignore')
-                    mtime = filepath.stat().st_mtime
-                    content_hash = _content_hash(content)
+                refs = extract_references(db_path, content)
+                if refs:
+                    insert_references(conn, [asdict(r) for r in refs])
 
-                    existing = get_indexed_file(conn, db_path)
-                    if existing and existing['content_hash'] == content_hash:
-                        continue  # unchanged — skip re-embedding
-
-                    language = detect_language(str(filepath))
-                    chunks = chunk_file(db_path, content, repo_name)
-
-                    if not chunks:
-                        continue
-
-                    delete_file_chunks(conn, db_path)
-                    delete_file_references(conn, db_path)
-
-                    refs = extract_references(db_path, content)
-                    if refs:
-                        insert_references(conn, [asdict(r) for r in refs])
-
-                    file_chunks_added = 0
-                    for chunk in chunks:
-                        embedding = embed_text(chunk.text)
-                        chunk_id = insert_chunk(
-                            conn,
-                            {
-                                'file_path': db_path,
-                                'repo': repo_name,
-                                'language': language,
-                                'symbol_name': chunk.symbol_name,
-                                'symbol_type': chunk.symbol_type,
-                                'module': chunk.module,
-                                'text': chunk.text,
-                            },
-                        )
-                        insert_chunk_embedding(conn, chunk_id, embedding)
-                        file_chunks_added += 1
-
-                    upsert_indexed_file(
+                file_chunks_added = 0
+                for chunk in chunks:
+                    embedding = embed_text(chunk.text)
+                    chunk_id = insert_chunk(
                         conn,
                         {
-                            'repo': repo_name,
                             'file_path': db_path,
+                            'repo': repo_name,
                             'language': language,
-                            'mtime': mtime,
-                            'content_hash': content_hash,
-                            'chunk_count': file_chunks_added,
-                            'indexed_at': datetime.now(UTC).isoformat(),
-                            'status': 'ok',
+                            'symbol_name': chunk.symbol_name,
+                            'symbol_type': chunk.symbol_type,
+                            'module': chunk.module,
+                            'text': chunk.text,
                         },
                     )
-                    conn.commit()
-                    files_updated += 1
-                    chunks_added += file_chunks_added
+                    insert_chunk_embedding(conn, chunk_id, embedding)
+                    file_chunks_added += 1
 
-                except Exception as exc:
-                    upsert_indexed_file(
-                        conn,
-                        {
-                            'repo': repo_name,
-                            'file_path': db_path,
-                            'language': detect_language(str(filepath)),
-                            'mtime': filepath.stat().st_mtime if filepath.exists() else 0.0,
-                            'content_hash': '',
-                            'chunk_count': 0,
-                            'indexed_at': datetime.now(UTC).isoformat(),
-                            'status': f'error: {exc}',
-                        },
-                    )
-                    conn.commit()
+                upsert_indexed_file(
+                    conn,
+                    {
+                        'repo': repo_name,
+                        'file_path': db_path,
+                        'language': language,
+                        'mtime': mtime,
+                        'content_hash': content_hash,
+                        'chunk_count': file_chunks_added,
+                        'indexed_at': datetime.now(UTC).isoformat(),
+                        'status': 'ok',
+                    },
+                )
+                conn.commit()
+                files_updated += 1
+                chunks_added += file_chunks_added
+
+            except Exception as exc:
+                upsert_indexed_file(
+                    conn,
+                    {
+                        'repo': repo_name,
+                        'file_path': db_path,
+                        'language': detect_language(str(filepath)),
+                        'mtime': filepath.stat().st_mtime if filepath.exists() else 0.0,
+                        'content_hash': '',
+                        'chunk_count': 0,
+                        'indexed_at': datetime.now(UTC).isoformat(),
+                        'status': f'error: {exc}',
+                    },
+                )
+                conn.commit()
 
     except Exception as exc:
         run_error = str(exc)
