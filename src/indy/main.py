@@ -1,3 +1,5 @@
+import time
+from collections import Counter
 from pathlib import Path
 
 import typer
@@ -22,22 +24,30 @@ def status():
     if last:
         console.print()
         console.print(f'[bold]Last run:[/bold] {last["repo"]} @ {last["started_at"]}')
-        console.print(f'  scanned {last["files_scanned"]}, updated {last["files_updated"]}, +{last["chunks_added"]} chunks')
-        if last['error']:
+        if last['finished_at']:
+            console.print(f'  scanned {last["files_scanned"]}, updated {last["files_updated"]}, +{last["chunks_added"]} chunks')
+        else:
+            console.print('  [yellow]interrupted (did not finish)[/yellow]')
+        if last.get('error'):
             console.print(f'  [red]run error: {last["error"]}[/red]')
 
     errors = stats.get('error_file_details', [])
     if errors:
         console.print()
         console.print(f'[bold red]Error files: {len(errors)}[/bold red]')
+        # Group by repo and error message for a compact summary
+        by_repo: dict[str, Counter[str]] = {}
         for ef in errors:
-            # Strip the leading "error: " prefix stored in the status column
             msg = ef['status'].removeprefix('error: ')
-            # Truncate long messages so output stays readable
+            # Normalize messages: keep only the first line / first 80 chars
+            msg = msg.split('\n')[0]
             if len(msg) > 80:
                 msg = msg[:77] + '...'
-            console.print(f'  [red]✗[/red] [dim]{ef["repo"]}[/dim]  {ef["file_path"]}')
-            console.print(f'    [dim]{msg}[/dim]')
+            by_repo.setdefault(ef['repo'], Counter())[msg] += 1
+        for repo, msg_counts in sorted(by_repo.items()):
+            console.print(f'  [dim]{repo}[/dim]')
+            for msg, count in msg_counts.most_common():
+                console.print(f'    [red]✗[/red] {count} file{"s" if count > 1 else ""}: [dim]{msg}[/dim]')
 
 
 @indy_app.command('index')
@@ -47,6 +57,8 @@ def index(
     all_repos: bool = typer.Option(False, '--all', help='Index all active repos from repos.json.'),
 ):
     """Index a path or repo into the semantic search store."""
+    t0 = time.perf_counter()
+
     if path:
         root = Path(path).expanduser().resolve()
         if not root.exists():
@@ -55,7 +67,7 @@ def index(
         repo_name = root.name
         console.print(f'Indexing [bold]{root}[/bold] as repo [bold]{repo_name}[/bold]...')
         result = service.index_path(root, repo_name)
-        _print_index_result(result)
+        print_index_result(result)
 
     elif repo:
         console.print(f'Indexing repo [bold]{repo}[/bold]...')
@@ -64,20 +76,31 @@ def index(
         except ValueError as exc:
             console.print(f'[red]{exc}[/red]')
             raise typer.Exit(1) from exc
-        _print_index_result(result)
+        print_index_result(result)
 
     else:
         # Default: index all active repos
         console.print('Indexing all active repos...')
         results = service.index_all()
         for result in results:
-            _print_index_result(result)
+            print_index_result(result)
         total_updated = sum(r['files_updated'] for r in results)
         total_chunks = sum(r['chunks_added'] for r in results)
         console.print(f'\n[bold]Done.[/bold] {len(results)} repos, {total_updated} files updated, {total_chunks} chunks added.')
 
+    elapsed = time.perf_counter() - t0
+    console.print(f'[dim]Completed in {format_elapsed(elapsed)}[/dim]')
 
-def _print_index_result(result: dict) -> None:
+
+def format_elapsed(seconds: float) -> str:
+    if seconds < 60:
+        return f'{seconds:.1f}s'
+    minutes = int(seconds // 60)
+    secs = seconds % 60
+    return f'{minutes}m {secs:.1f}s'
+
+
+def print_index_result(result: dict) -> None:
     status_str = f'[red]error: {result["error"]}[/red]' if result['error'] else '[green]ok[/green]'
     console.print(
         f'  {result["repo"]}: scanned {result["files_scanned"]}, '
