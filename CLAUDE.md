@@ -17,6 +17,7 @@ chunker.py     Chunking strategies per content type:
                - Config (yaml/toml/json): whole-file if small, code-split if large
                - Other code: recursive character splitter
 repos.py       Reads ~/dev/repos.json, returns active repos + configured extra paths.
+               Resolves repo ownership (owned vs reference) from per-repo owner field.
 config.py      Constants and env var overrides (INDY_DIR, OLLAMA_HOST, OLLAMA_MODEL, etc.).
 charts.py      Terminal chart primitives (horizontal/vertical bars) using Rich + Unicode blocks.
 main.py        CLI entry points only — thin Typer shells calling service.py.
@@ -51,6 +52,15 @@ Override: `OLLAMA_HOST`, `OLLAMA_MODEL`, `EMBEDDING_DIM`.
 Ollama must be running before any index or search operation. Start with `ollama serve` or
 `brew services start ollama`. Model weights stored at `$XDG_DATA_HOME/ollama/models`.
 
+## Repo Ownership
+
+repos.json has a top-level `owner` field (default: `datapointchris`). Each repo can optionally
+set its own `owner`. Repos matching the top-level owner (or with no explicit owner) are "owned";
+repos with a different owner are "reference" — third-party code cloned for study.
+
+Search supports `--owned` / `--reference` flags (CLI) and `owned` parameter (MCP) to filter by
+ownership. Default is to search all repos.
+
 ## What Gets Indexed
 
 Active repos from `~/dev/repos.json` plus paths in `EXTRA_PATHS_RAW` (default: `~/notes/dev/`).
@@ -73,6 +83,9 @@ For git repos, `.gitignore` is respected via `git ls-files`. Non-git paths fall 
   reference extraction for those languages is deferred. Python AST covers the primary use case.
 - **target_module captured for attribute calls** — `storage.get_db()` stores target_module="storage",
   helping disambiguate when multiple functions share a name across modules.
+- **Ownership resolved at service layer, not storage** — repos.json maps repo name → owner.
+  service.py resolves `--owned`/`--reference` into a set of repo names and passes it to storage
+  as a generic filter. Storage knows nothing about ownership.
 
 ## CLI
 
@@ -82,6 +95,9 @@ indy index --repo ichrisbirch  # single repo by name
 indy index ~/path/             # arbitrary path (uses dirname as label)
 indy search "query"            # semantic search
 indy search "q" --repo R --language python --limit 20
+indy search "q" --owned        # only your repos (owner matches top-level)
+indy search "q" --reference    # only reference repos (owner differs)
+indy update                    # reinstall latest from GitHub
 indy status                    # health dashboard: totals, recent runs, error count
 indy errors                    # per-file error listing grouped by repo
 indy errors-clear              # remove error records (re-attempted on next index)

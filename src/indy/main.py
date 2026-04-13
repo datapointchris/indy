@@ -170,9 +170,15 @@ def search(
     repo: str = typer.Option(None, '--repo', '-r', help='Limit search to this repo.'),
     language: str = typer.Option(None, '--language', '-l', help='Limit to file language (python, go, markdown…).'),
     limit: int = typer.Option(10, '--limit', '-n', help='Number of results to return.'),
+    owned: bool = typer.Option(False, '--owned', help='Only search your own repos.'),
+    reference: bool = typer.Option(False, '--reference', help='Only search reference repos.'),
 ):
     """Semantic search across indexed code and notes."""
-    results = service.search(query, repo=repo, language=language, limit=limit)
+    if owned and reference:
+        console.print('[red]Cannot use --owned and --reference together.[/red]')
+        raise typer.Exit(1)
+    ownership = True if owned else (False if reference else None)
+    results = service.search(query, repo=repo, language=language, limit=limit, owned=ownership)
 
     if not results:
         console.print('No results.')

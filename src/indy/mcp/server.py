@@ -14,11 +14,18 @@ def indy_status() -> str:
 
 
 @mcp.tool()
-def indy_search(query: str, repo: str | None = None, language: str | None = None, limit: int = 10) -> str:
+def indy_search(
+    query: str,
+    repo: str | None = None,
+    language: str | None = None,
+    limit: int = 10,
+    owned: bool | None = None,
+) -> str:
     """Semantic search across indexed code and notes.
     Returns ranked chunks with file path, symbol name, snippet, and similarity score.
-    Use repo to narrow to a specific codebase. Use language to filter by file type (python, go, markdown…)."""
-    results = service.search(query, repo=repo, language=language, limit=limit)
+    Use repo to narrow to a specific codebase. Use language to filter by file type (python, go, markdown…).
+    Use owned=true to search only your repos, owned=false for reference repos only."""
+    results = service.search(query, repo=repo, language=language, limit=limit, owned=owned)
     for r in results:
         r['score'] = round(1 - r.pop('distance'), 4)
     return json.dumps({'results': results})

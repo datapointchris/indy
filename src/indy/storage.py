@@ -137,8 +137,14 @@ def search_chunks(
     repo: str | None = None,
     language: str | None = None,
     limit: int = 10,
+    repos: set[str] | None = None,
 ) -> list[dict]:
-    """KNN vector search. Filters by repo/language in Python after oversampling."""
+    """KNN vector search. Filters by repo/language in Python after oversampling.
+
+    repo: exact single-repo filter (existing behavior).
+    repos: set of repo names to include (for owned/reference filtering).
+    If both are set, repo takes precedence.
+    """
     # Oversample to ensure enough results survive metadata filtering
     candidate_limit = min(limit * 20, 1000)
 
@@ -159,6 +165,8 @@ def search_chunks(
         if chunk is None:
             continue
         if repo and chunk['repo'] != repo:
+            continue
+        if repos is not None and chunk['repo'] not in repos:
             continue
         if language and chunk['language'] != language:
             continue

@@ -12,8 +12,15 @@ indy index --repo ichrisbirch  # index a single repo by name
 indy index ~/notes/dev/        # index an arbitrary path
 indy search "query"            # semantic search across all indexed content
 indy search "query" --repo indy --language python
+indy search "query" --owned    # only your repos
+indy search "query" --reference # only reference repos
 indy status                    # index health: file counts, last run
+indy errors                    # per-file error listing grouped by repo
+indy errors-clear              # remove error records (re-attempted on next index)
+indy stats                     # bar charts: files/chunks per repo, last indexed
+indy stats ichrisbirch         # scan history charts for a specific repo
 indy repos                     # list indexed repos with chunk counts
+indy update                    # reinstall latest from GitHub
 ```
 
 ## Architecture
@@ -23,7 +30,8 @@ storage.py     SQLite manifest (indexed_file, index_run, symbol_reference) + sql
 service.py     All logic: index_path, search, search_symbol, refresh, get_dependencies
 chunker.py     Python AST chunking + tree-sitter (Go/TS/Rust) + prose/code splitters
                + Python reference extraction (call graph)
-repos.py       Reads ~/dev/repos.json, returns active repos with resolved paths
+repos.py       Reads ~/dev/repos.json, returns active repos with resolved paths.
+               Resolves repo ownership (owned vs reference) from per-repo owner field.
 config.py      Constants and env var overrides (INDY_DIR, OLLAMA_HOST, etc.)
 main.py        Thin Typer CLI wrappers over service.py
 mcp/server.py  FastMCP tools: indy_search, indy_search_symbol, indy_get_file,

@@ -24,6 +24,8 @@ from indy.config import SKIP_DIRS
 from indy.config import SKIP_FILES
 from indy.config import compact_path
 from indy.config import expand_path
+from indy.repos import get_owned_repo_names
+from indy.repos import get_reference_repo_names
 from indy.repos import get_repo_by_name
 from indy.repos import load_active_repos
 from indy.repos import load_extra_paths
@@ -259,11 +261,27 @@ def expand_result_paths(results: list[dict], key: str = 'file_path') -> list[dic
     return results
 
 
-def search(query: str, repo: str | None = None, language: str | None = None, limit: int = 10) -> list[dict]:
+def resolve_ownership_filter(owned: bool | None) -> set[str] | None:
+    """Translate owned flag into a set of repo names to include, or None for no filter."""
+    if owned is None:
+        return None
+    if owned:
+        return get_owned_repo_names()
+    return get_reference_repo_names()
+
+
+def search(
+    query: str,
+    repo: str | None = None,
+    language: str | None = None,
+    limit: int = 10,
+    owned: bool | None = None,
+) -> list[dict]:
+    repos = resolve_ownership_filter(owned)
     embedding = embed_text(query)
     conn = get_db()
     try:
-        return expand_result_paths(search_chunks(conn, embedding, repo=repo, language=language, limit=limit))
+        return expand_result_paths(search_chunks(conn, embedding, repo=repo, language=language, limit=limit, repos=repos))
     finally:
         conn.close()
 
