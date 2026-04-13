@@ -230,7 +230,8 @@ def get_status() -> dict:
     try:
         stats = get_index_stats(conn)
         if stats['error_files']:
-            stats['error_file_details'] = get_error_files(conn)
+            all_errors = get_error_files(conn)
+            stats['error_file_details'] = [e for e in all_errors if Path(e['file_path']).exists()]
         else:
             stats['error_file_details'] = []
         return stats
