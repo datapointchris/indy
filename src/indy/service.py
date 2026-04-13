@@ -28,6 +28,7 @@ from indy.config import expand_path
 from indy.repos import get_repo_by_name
 from indy.repos import load_active_repos
 from indy.repos import load_extra_paths
+from indy.storage import delete_error_files
 from indy.storage import delete_file_chunks
 from indy.storage import delete_file_references
 from indy.storage import finish_index_run
@@ -310,6 +311,15 @@ def refresh(repo: str | None = None) -> dict:
         'chunks_added': sum(r['chunks_added'] for r in results),
         'errors': [r['error'] for r in results if r['error']],
     }
+
+
+def clear_errors() -> int:
+    """Remove all error records from indexed_file. Returns count cleared."""
+    conn = get_db()
+    try:
+        return delete_error_files(conn)
+    finally:
+        conn.close()
 
 
 def get_dependencies(symbol_name: str, repo: str | None = None, direction: str = 'both') -> dict:

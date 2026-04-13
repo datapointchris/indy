@@ -213,6 +213,13 @@ def get_error_files(conn: sqlite3.Connection) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def delete_error_files(conn: sqlite3.Connection) -> int:
+    """Remove all indexed_file records with error status. Returns count deleted."""
+    cursor = conn.execute("DELETE FROM indexed_file WHERE status != 'ok'")
+    conn.commit()
+    return cursor.rowcount
+
+
 def get_index_stats(conn: sqlite3.Connection) -> dict:
     total_files = conn.execute("SELECT COUNT(*) FROM indexed_file WHERE status = 'ok'").fetchone()[0]
     repo_count = conn.execute("SELECT COUNT(DISTINCT repo) FROM indexed_file WHERE status = 'ok'").fetchone()[0]

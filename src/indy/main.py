@@ -133,6 +133,16 @@ def print_index_result(result: dict) -> None:
     )
 
 
+@indy_app.command('clear-errors')
+def clear_errors():
+    """Remove all error records from the index, so they are re-attempted on next index run."""
+    cleared = service.clear_errors()
+    if cleared:
+        console.print(f'Cleared {cleared} error record{"s" if cleared != 1 else ""}.')
+    else:
+        console.print('No error records to clear.')
+
+
 @indy_app.command('search')
 def search(
     query: str = typer.Argument(..., help='Natural language search query.'),
