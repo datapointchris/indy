@@ -1,5 +1,4 @@
 import time
-from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 
@@ -14,6 +13,10 @@ from rich.progress import TextColumn
 from rich.table import Table
 
 import indy.service as service
+from indy.charts import horizontal_bars
+from indy.charts import vertical_bars
+from indy.repos import load_active_repos
+from indy.repos import load_extra_paths
 
 indy_app = typer.Typer(name='indy', no_args_is_help=True, help='Semantic search index for local codebases, docs, and notes.')
 console = Console(highlight=False)
@@ -21,40 +24,24 @@ console = Console(highlight=False)
 
 @indy_app.command('status')
 def status():
-    """Show index health: repos indexed, file counts, last run, errors."""
+    """Show index health: totals, recent runs, and error count."""
     stats = service.get_status()
     repo_label = f'(across {stats["repo_count"]} repos)' if stats['repo_count'] else ''
     console.print(f'[bold]Files indexed:[/bold] {stats["total_files"]}  {repo_label}')
     console.print(f'[bold]Total chunks:[/bold]  {stats["total_chunks"]}')
 
-    last = stats.get('last_run')
-    if last:
+    recent = stats.get('recent_runs', [])
+    if recent:
         console.print()
-        console.print(f'[bold]Last run:[/bold] {last["repo"]} @ {last["started_at"]}')
-        if last['finished_at']:
-            console.print(f'  scanned {last["files_scanned"]}, updated {last["files_updated"]}, +{last["chunks_added"]} chunks')
-        else:
-            console.print('  [yellow]interrupted (did not finish)[/yellow]')
-        if last.get('error'):
-            console.print(f'  [red]run error: {last["error"]}[/red]')
+        console.print('[bold]Recent:[/bold]')
+        for run in recent:
+            updated = f'updated {run["files_updated"]}, +{run["chunks_added"]} chunks' if run['files_updated'] else 'no changes'
+            console.print(f'  {run["repo"]:<25s} scanned {run["files_scanned"]}, {updated}')
 
-    errors = stats.get('error_file_details', [])
-    if errors:
+    error_count = stats.get('error_files', 0)
+    if error_count:
         console.print()
-        console.print(f'[bold red]Error files: {len(errors)}[/bold red]')
-        # Group by repo and error message for a compact summary
-        by_repo: dict[str, Counter[str]] = {}
-        for ef in errors:
-            msg = ef['status'].removeprefix('error: ')
-            # Normalize messages: keep only the first line / first 80 chars
-            msg = msg.split('\n')[0]
-            if len(msg) > 80:
-                msg = msg[:77] + '...'
-            by_repo.setdefault(ef['repo'], Counter())[msg] += 1
-        for repo, msg_counts in sorted(by_repo.items()):
-            console.print(f'  {repo}')
-            for msg, count in msg_counts.most_common():
-                console.print(f'    [red]✗[/red] {count} file{"s" if count > 1 else ""}: {msg}')
+        console.print(f'[bold red]Error files: {error_count}[/bold red]  (run [bold]indy errors[/bold] for details)')
 
 
 @indy_app.command('index')
@@ -103,9 +90,14 @@ def index(
         print_index_result(result)
 
     else:
+        all_targets = load_active_repos() + load_extra_paths()
+        results = []
         with progress:
-            task_id = progress.add_task('all repos', total=None, current_file='')
-            results = service.index_all(on_progress=make_progress_callback(task_id))
+            for target in all_targets:
+                task_id = progress.add_task(target['name'], total=None, current_file='')
+                result = service.index_path(target['path'], target['name'], on_progress=make_progress_callback(task_id))
+                results.append(result)
+                progress.remove_task(task_id)
         for result in results:
             print_index_result(result)
         total_updated = sum(r['files_updated'] for r in results)
@@ -133,8 +125,33 @@ def print_index_result(result: dict) -> None:
     )
 
 
-@indy_app.command('clear-errors')
-def clear_errors():
+@indy_app.command('errors')
+def errors():
+    """Show all indexing errors, grouped by repo with per-file details."""
+    stats = service.get_status()
+    error_details = stats.get('error_file_details', [])
+
+    if not error_details:
+        console.print('No errors.')
+        return
+
+    by_repo: dict[str, list[dict]] = {}
+    for ef in error_details:
+        by_repo.setdefault(ef['repo'], []).append(ef)
+
+    for repo in sorted(by_repo):
+        files = sorted(by_repo[repo], key=lambda f: f['file_path'])
+        console.print(f'\n[bold]{repo}[/bold] ({len(files)} error{"s" if len(files) != 1 else ""})')
+        for ef in files:
+            msg = ef['status'].removeprefix('error: ').split('\n')[0]
+            console.print(f'  [red]✗[/red] {ef["file_path"]}')
+            console.print(f'    {msg}')
+
+    console.print(f'\n{len(error_details)} total — run [bold]indy errors-clear[/bold] to remove')
+
+
+@indy_app.command('errors-clear')
+def errors_clear():
     """Remove all error records from the index, so they are re-attempted on next index run."""
     cleared = service.clear_errors()
     if cleared:
@@ -165,6 +182,71 @@ def search(
         console.print(f'   {snippet}')
         if len(r['text']) > 300:
             console.print('   …')
+
+
+@indy_app.command('stats')
+def stats(
+    repo: str = typer.Argument(None, help='Show scan history for a specific repo.'),
+):
+    """Show index size per repo with charts, or scan history for a specific repo."""
+    if repo:
+        history = service.repo_scan_history(repo)
+        if not history:
+            console.print(f'No scan history for {repo!r}.')
+            raise typer.Exit(1)
+
+        labels = [h['started_at'][5:10] for h in history]
+        files_updated = [float(h['files_updated'] or 0) for h in history]
+        chunks_added = [float(h['chunks_added'] or 0) for h in history]
+
+        vertical_bars(
+            f'{repo} — files updated per scan',
+            labels,
+            files_updated,
+            color='green',
+            height=10,
+            console=console,
+        )
+        vertical_bars(
+            f'{repo} — chunks added per scan',
+            labels,
+            chunks_added,
+            color='cyan',
+            height=10,
+            console=console,
+        )
+        console.print()
+        return
+
+    repo_list = service.list_repos()
+    if not repo_list:
+        console.print('No repos indexed yet.')
+        return
+
+    by_files = sorted(repo_list, key=lambda r: r['file_count'], reverse=True)
+    horizontal_bars(
+        'Files per repo',
+        [r['repo'] for r in by_files],
+        [float(r['file_count']) for r in by_files],
+        color='green',
+        console=console,
+    )
+
+    by_chunks = sorted(repo_list, key=lambda r: r['chunk_count'], reverse=True)
+    horizontal_bars(
+        'Chunks per repo',
+        [r['repo'] for r in by_chunks],
+        [float(r['chunk_count']) for r in by_chunks],
+        color='cyan',
+        console=console,
+    )
+
+    by_date = sorted(repo_list, key=lambda r: r['last_indexed'], reverse=True)
+    console.print('\n  [bold]Last indexed[/bold]')
+    for r in by_date:
+        console.print(f'    {r["repo"]:<25s} {r["last_indexed"][:19]}')
+
+    console.print()
 
 
 @indy_app.command('repos')

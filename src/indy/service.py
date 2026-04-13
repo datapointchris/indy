@@ -37,6 +37,8 @@ from indy.storage import get_error_files
 from indy.storage import get_index_stats
 from indy.storage import get_indexed_file
 from indy.storage import get_indexed_repos
+from indy.storage import get_recent_runs
+from indy.storage import get_repo_scan_history
 from indy.storage import get_symbol_callees
 from indy.storage import get_symbol_callers
 from indy.storage import insert_chunk
@@ -55,7 +57,12 @@ def embed_text(text: str) -> list[float]:
         json={'model': OLLAMA_MODEL, 'input': text},
         timeout=30.0,
     )
-    response.raise_for_status()
+    if response.status_code != 200:
+        try:
+            body = response.json().get('error', response.text)
+        except Exception:
+            body = response.text
+        raise RuntimeError(f'embedding failed ({response.status_code}): {body}')
     return response.json()['embeddings'][0]
 
 
@@ -281,6 +288,7 @@ def get_status() -> dict:
     conn = get_db()
     try:
         stats = get_index_stats(conn)
+        stats['recent_runs'] = get_recent_runs(conn, limit=5)
         if stats['error_files']:
             stats['error_file_details'] = expand_result_paths(get_error_files(conn))
         else:
@@ -294,6 +302,14 @@ def list_repos() -> list[dict]:
     conn = get_db()
     try:
         return get_indexed_repos(conn)
+    finally:
+        conn.close()
+
+
+def repo_scan_history(repo: str, limit: int = 20) -> list[dict]:
+    conn = get_db()
+    try:
+        return get_repo_scan_history(conn, repo, limit=limit)
     finally:
         conn.close()
 

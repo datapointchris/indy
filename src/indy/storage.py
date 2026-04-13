@@ -225,16 +225,30 @@ def get_index_stats(conn: sqlite3.Connection) -> dict:
     repo_count = conn.execute("SELECT COUNT(DISTINCT repo) FROM indexed_file WHERE status = 'ok'").fetchone()[0]
     total_chunks = conn.execute('SELECT COUNT(*) FROM chunk').fetchone()[0]
     error_files = conn.execute("SELECT COUNT(*) FROM indexed_file WHERE status != 'ok'").fetchone()[0]
-    last_run = conn.execute(
-        'SELECT repo, started_at, finished_at, files_scanned, files_updated, chunks_added, error FROM index_run ORDER BY id DESC LIMIT 1'
-    ).fetchone()
     return {
         'total_files': total_files,
         'repo_count': repo_count,
         'total_chunks': total_chunks,
         'error_files': error_files,
-        'last_run': dict(last_run) if last_run else None,
     }
+
+
+def get_recent_runs(conn: sqlite3.Connection, limit: int = 5) -> list[dict]:
+    """Return the most recent index runs, newest first."""
+    rows = conn.execute(
+        'SELECT repo, started_at, files_scanned, files_updated, chunks_added FROM index_run ORDER BY id DESC LIMIT ?',
+        (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_repo_scan_history(conn: sqlite3.Connection, repo: str, limit: int = 20) -> list[dict]:
+    """Return scan history for a specific repo, oldest first (for charting)."""
+    rows = conn.execute(
+        'SELECT started_at, files_scanned, files_updated, chunks_added FROM index_run WHERE repo = ? ORDER BY id DESC LIMIT ?',
+        (repo, limit),
+    ).fetchall()
+    return [dict(row) for row in reversed(rows)]
 
 
 def get_indexed_repos(conn: sqlite3.Connection) -> list[dict]:
