@@ -19,7 +19,7 @@ chunker.py     Chunking strategies per content type:
 repos.py       Reads ~/dev/repos.json, returns active repos + configured extra paths.
                Resolves repo ownership (owned vs reference) from per-repo owner field.
 config.py      Constants and env var overrides (INDY_DIR, OLLAMA_HOST, OLLAMA_MODEL, etc.).
-charts.py      Terminal chart primitives (horizontal/vertical bars) using Rich + Unicode blocks.
+charts.py      Terminal chart primitives (horizontal bars, vertical bars, streamline) using Rich + Unicode.
 main.py        CLI entry points only — thin Typer shells calling service.py.
 mcp/server.py  FastMCP tools — thin wrappers calling service.py.
 ```

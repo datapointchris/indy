@@ -128,10 +128,10 @@ def streamline(
     height: int = 10,
     console: Console | None = None,
 ) -> None:
-    """Render an area chart with box-drawing curves for smooth transitions.
+    """Render a line chart with box-drawing curves for smooth transitions.
 
-    Each data point gets 2 chars wide, with 1-char transition columns between
-    them using ╭╮╯╰│ for smooth curves. Area below the line is filled.
+    Column width adapts to label length. Each data point gets `col_width` chars
+    wide, with 1-char transition columns using ╭╮╯╰│ for smooth curves.
     """
     con = console or Console()
     max_val = max(values) if values else 0
@@ -139,6 +139,10 @@ def streamline(
         con.print(f'\n  [bold]{title}[/bold]')
         con.print('    No data.')
         return
+
+    col_width = max((len(lbl) for lbl in labels), default=2)
+    col_width = max(col_width, 2)
+    slot_width = col_width + 1
 
     heights = [max(1, round((v / max_val) * height)) if v > 0 else 0 for v in values]
     n = len(heights)
@@ -159,23 +163,21 @@ def streamline(
 
         for i, h in enumerate(heights):
             if row == h and h > 0:
-                line.append('──', style=color)
-            elif row < h:
-                line.append('██', style=color)
+                line.append('─' * col_width, style=color)
             else:
-                line.append('  ')
+                line.append(' ' * col_width)
 
             if i < n - 1:
                 line.append(transition_char(row, h, heights[i + 1], color))
 
         con.print(line)
 
-    axis_width = n * 2 + (n - 1)
+    axis_width = n * col_width + (n - 1)
     con.print(f'        └{"─" * (axis_width + 2)}')
 
     label_line = Text('         ')
     for lbl in labels:
-        label_line.append(f'{lbl[:3]:<3}')
+        label_line.append(f'{lbl:<{slot_width}}')
     con.print(label_line)
 
 
@@ -187,8 +189,6 @@ def transition_char(row: int, h_left: int, h_right: int, color: str) -> Text:
     if h_left == h_right:
         if row == h_left and h_left > 0:
             return Text('─', style=color)
-        if row < h_left:
-            return Text('█', style=color)
         return Text(' ')
 
     if row > h_top or (row == h_top == 0):
@@ -204,9 +204,6 @@ def transition_char(row: int, h_left: int, h_right: int, color: str) -> Text:
     if row == h_bot and h_bot > 0:
         char = '╰' if h_left > h_right else '╯'
         return Text(char, style=color)
-
-    if row < h_bot:
-        return Text('█', style=color)
 
     return Text(' ')
 
