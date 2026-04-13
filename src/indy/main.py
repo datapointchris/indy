@@ -16,7 +16,7 @@ console = Console()
 def status():
     """Show index health: repos indexed, file counts, last run, errors."""
     stats = service.get_status()
-    repo_label = f'[dim](across {stats["repo_count"]} repos)[/dim]' if stats['repo_count'] else ''
+    repo_label = f'(across {stats["repo_count"]} repos)' if stats['repo_count'] else ''
     console.print(f'[bold]Files indexed:[/bold] {stats["total_files"]}  {repo_label}')
     console.print(f'[bold]Total chunks:[/bold]  {stats["total_chunks"]}')
 
@@ -45,9 +45,9 @@ def status():
                 msg = msg[:77] + '...'
             by_repo.setdefault(ef['repo'], Counter())[msg] += 1
         for repo, msg_counts in sorted(by_repo.items()):
-            console.print(f'  [dim]{repo}[/dim]')
+            console.print(f'  {repo}')
             for msg, count in msg_counts.most_common():
-                console.print(f'    [red]✗[/red] {count} file{"s" if count > 1 else ""}: [dim]{msg}[/dim]')
+                console.print(f'    [red]✗[/red] {count} file{"s" if count > 1 else ""}: {msg}')
 
 
 @indy_app.command('index')
@@ -89,7 +89,7 @@ def index(
         console.print(f'\n[bold]Done.[/bold] {len(results)} repos, {total_updated} files updated, {total_chunks} chunks added.')
 
     elapsed = time.perf_counter() - t0
-    console.print(f'[dim]Completed in {format_elapsed(elapsed)}[/dim]')
+    console.print(f'Completed in {format_elapsed(elapsed)}')
 
 
 def format_elapsed(seconds: float) -> str:
@@ -126,11 +126,11 @@ def search(
     for i, r in enumerate(results, 1):
         score = 1 - r['distance']  # convert distance to similarity
         symbol = f' · {r["symbol_name"]}' if r.get('symbol_name') else ''
-        console.print(f'\n[bold cyan]{i}.[/bold cyan] [dim]{r["file_path"]}[/dim]{symbol}  [dim](score: {score:.2f})[/dim]')
+        console.print(f'\n[bold cyan]{i}.[/bold cyan] {r["file_path"]}{symbol}  (score: {score:.2f})')
         snippet = r['text'][:300].replace('\n', '\n   ')
         console.print(f'   {snippet}')
         if len(r['text']) > 300:
-            console.print('   [dim]…[/dim]')
+            console.print('   …')
 
 
 @indy_app.command('repos')
