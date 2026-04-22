@@ -3,6 +3,8 @@ import json
 import re
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 
@@ -286,14 +288,7 @@ def repos():
 @indy_app.command('update')
 def update():
     """Reinstall the latest version of indy from GitHub."""
-    try:
-        current_version = importlib.metadata.version('indy')
-    except importlib.metadata.PackageNotFoundError:
-        current_version = 'unknown'
-
     current_hash = get_installed_commit_hash()
-    hash_display = f' @ {current_hash[:8]}' if current_hash else ''
-    console.print(f'Current version: [cyan]v{current_version}{hash_display}[/cyan]')
 
     with console.status('Updating from GitHub...'):
         result = subprocess.run(  # nosec B603 B607
@@ -303,20 +298,46 @@ def update():
         )
 
     if result.returncode != 0:
-        console.print(f'[red]Update failed:[/red]\n{result.stderr}')
+        console.print(f'✗ indy upgrade failed: {result.stderr.strip()}')
         raise typer.Exit(1)
 
     uv_output = result.stderr + result.stdout
     hash_match = re.search(r'Updated.*indy\s+\(([0-9a-f]{8,40})\)', uv_output)
     new_hash = hash_match.group(1) if hash_match else None
 
+    if current_hash and new_hash and (current_hash.startswith(new_hash) or new_hash.startswith(current_hash)):
+        console.print(f'✓ indy already at latest: {new_hash[:8]}')
+        return
+
     if current_hash and new_hash:
-        if current_hash.startswith(new_hash) or new_hash.startswith(current_hash):
-            console.print(f'Already at latest (v{current_version} @ {new_hash[:8]}).')
-        else:
-            console.print(f'[green]Updated: {current_hash[:8]} → {new_hash[:8]}[/green]')
+        console.print(f'✓ indy upgraded: {current_hash[:8]} → {new_hash[:8]}')
+        subjects = fetch_github_changes('datapointchris', 'indy', current_hash, new_hash)
+        if subjects:
+            console.print()
+            console.print('Changes:')
+            for s in subjects:
+                console.print(f'  • {s}')
     else:
-        console.print('[green]Updated successfully.[/green]')
+        console.print('✓ indy upgraded')
+
+
+def fetch_github_changes(owner: str, repo: str, from_ref: str, to_ref: str) -> list[str]:
+    """Fetch commit subjects between two refs via GitHub compare API."""
+    url = f'https://api.github.com/repos/{owner}/{repo}/compare/{from_ref}...{to_ref}'
+    req = urllib.request.Request(url, headers={'Accept': 'application/vnd.github+json'})  # noqa: S310
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
+            data = json.loads(resp.read())
+    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError):
+        return []
+
+    subjects: list[str] = []
+    for c in data.get('commits', []):
+        message = c.get('commit', {}).get('message', '')
+        subject = message.split('\n', 1)[0].strip()
+        if subject:
+            subjects.append(subject)
+    return subjects
 
 
 def get_installed_commit_hash() -> str | None:
