@@ -3,11 +3,10 @@ import json
 import re
 import subprocess
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 
+import httpx
 import typer
 from rich.console import Console
 from rich.progress import BarColumn
@@ -324,11 +323,11 @@ def update():
 def fetch_github_changes(owner: str, repo: str, from_ref: str, to_ref: str) -> list[str]:
     """Fetch commit subjects between two refs via GitHub compare API."""
     url = f'https://api.github.com/repos/{owner}/{repo}/compare/{from_ref}...{to_ref}'
-    req = urllib.request.Request(url, headers={'Accept': 'application/vnd.github+json'})  # noqa: S310
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
-            data = json.loads(resp.read())
-    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError):
+        resp = httpx.get(url, headers={'Accept': 'application/vnd.github+json'}, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+    except (httpx.HTTPError, ValueError):
         return []
 
     subjects: list[str] = []
