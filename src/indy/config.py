@@ -2,10 +2,7 @@ import json
 import os
 from pathlib import Path
 
-# Derived per-machine state, so it must stay out of ~/dev: that tree is
-# Syncthing-synced, and file-syncing a live WAL-mode SQLite DB corrupts it.
-XDG_DATA_HOME = Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local' / 'share'))
-INDY_DIR = Path(os.environ.get('INDY_DIR', XDG_DATA_HOME / 'indy'))
+INDY_DIR = Path(os.environ.get('INDY_DIR', Path.home() / 'dev' / 'indy'))
 DB_PATH = INDY_DIR / 'indy.db'
 LOG_PATH = INDY_DIR / 'indy.log'
 

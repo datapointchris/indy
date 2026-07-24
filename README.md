@@ -41,5 +41,5 @@ main.py        Thin Typer CLI wrappers over service.py
 
 ## Data
 
-- DB: `~/.local/share/indy/indy.db` (override with `INDY_DIR`)
+- DB: `~/dev/indy/indy.db` (override with `INDY_DIR`)
 - Embeddings: ollama `nomic-embed-text` at `http://localhost:11434` (override with `OLLAMA_HOST`, `OLLAMA_MODEL`)
