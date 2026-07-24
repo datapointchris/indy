@@ -14,6 +14,9 @@ indy search "query"            # semantic search across all indexed content
 indy search "query" --repo indy --language python
 indy search "query" --owned    # only your repos
 indy search "query" --reference # only reference repos
+indy search "query" --json     # machine-readable JSON output
+indy symbol get_db             # exact symbol lookup by function/class name
+indy deps get_db               # reference graph: callers + callees of a symbol
 indy status                    # index health: file counts, last run
 indy errors                    # per-file error listing grouped by repo
 indy errors-clear              # remove error records (re-attempted on next index)
@@ -34,14 +37,6 @@ repos.py       Reads ~/dev/repos.json, returns active repos with resolved paths.
                Resolves repo ownership (owned vs reference) from per-repo owner field.
 config.py      Constants and env var overrides (INDY_DIR, OLLAMA_HOST, etc.)
 main.py        Thin Typer CLI wrappers over service.py
-mcp/server.py  FastMCP tools: indy_search, indy_search_symbol, indy_get_file,
-               indy_list_repos, indy_status, indy_refresh, indy_get_dependencies
-```
-
-## MCP Setup
-
-```bash
-claude mcp add indy -- indy-mcp
 ```
 
 ## Data

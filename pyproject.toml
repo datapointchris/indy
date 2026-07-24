@@ -11,7 +11,6 @@ dependencies = [
     "rich>=13.0.0",
     "sqlite-vec>=0.1",
     "httpx>=0.27.0",
-    "mcp[cli]>=1.0.0",
     "tree-sitter>=0.21",
     "tree-sitter-go>=0.25.0",
     "tree-sitter-typescript>=0.23.2",
@@ -23,7 +22,6 @@ Repository = "https://github.com/datapointchris/indy"
 
 [project.scripts]
 indy = "indy.main:indy_app"
-indy-mcp = "indy.mcp.__main__:run"
 
 [dependency-groups]
 dev = [

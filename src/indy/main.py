@@ -437,12 +437,5 @@ def get_installed_commit_hash() -> str | None:
     return None
 
 
-@indy_app.command('mcp')
-def mcp():
-    """Show MCP server setup command."""
-    typer.echo('Add the MCP server:')
-    typer.echo('  claude mcp add indy -- indy-mcp')
-
-
 if __name__ == '__main__':
     indy_app()

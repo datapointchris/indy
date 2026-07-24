@@ -9,7 +9,7 @@ Local-first: sqlite-vec + ollama. No external APIs, no separate vector DB proces
 storage.py     Pure SQLite + sqlite-vec access. No business logic.
                Only layer that touches the DB or serializes embeddings.
 service.py     All meaningful operations: index_path, search, search_symbol, refresh,
-               get_dependencies. CLI and MCP are thin consumers of this layer.
+               get_dependencies. The CLI is a thin consumer of this layer.
 chunker.py     Chunking strategies per content type:
                - Python: AST (function/class/method boundaries)
                - Go/TS/TSX/Rust: tree-sitter AST (same granularity)
@@ -21,10 +21,9 @@ repos.py       Reads ~/dev/repos.json, returns active repos + configured extra p
 config.py      Constants and env var overrides (INDY_DIR, OLLAMA_HOST, OLLAMA_MODEL, etc.).
 charts.py      Terminal chart primitives (horizontal bars, vertical bars, streamline) using Rich + Unicode.
 main.py        CLI entry points only — thin Typer shells calling service.py.
-mcp/server.py  FastMCP tools — thin wrappers calling service.py.
 ```
 
-**service.py is the API.** All callers (CLI, MCP) go through service.py. Never call storage.py directly from main.py or mcp/server.py.
+**service.py is the API.** All callers go through service.py. Never call storage.py directly from main.py.
 
 ## Storage
 
@@ -58,8 +57,7 @@ repos.json has a top-level `owner` field (default: `datapointchris`). Each repo 
 set its own `owner`. Repos matching the top-level owner (or with no explicit owner) are "owned";
 repos with a different owner are "reference" — third-party code cloned for study.
 
-Search supports `--owned` / `--reference` flags (CLI) and `owned` parameter (MCP) to filter by
-ownership. Default is to search all repos.
+Search supports `--owned` / `--reference` flags to filter by ownership. Default is to search all repos.
 
 ## What Gets Indexed
 
@@ -75,8 +73,6 @@ For git repos, `.gitignore` is respected via `git ls-files`. Non-git paths fall 
   correct [0,1] similarity scores. L2 would produce incorrect rankings for non-normalized vectors.
 - **KNN oversample + Python filter** — vec0 MATCH can't filter on metadata; oversample 20× then
   filter by repo/language in Python.
-- **get_file_content reads from disk** — MCP `indy_get_file` returns current file contents, not
-  stored chunk text. Always up to date; no storage overhead.
 - **No git post-commit hook** — on-demand `indy index` + forge die covers the use case.
   Per-repo hook management adds maintenance overhead for marginal gain.
 - **symbol_reference is Python-only** — tree-sitter already parses Go/TS/Rust for chunking;
@@ -110,13 +106,9 @@ indy stats ichrisbirch         # scan history charts for a specific repo
 indy repos                     # per-repo file/chunk counts (table)
 ```
 
-## MCP
-
-```bash
-claude mcp add indy -- indy-mcp
-```
-
-Tools: `indy_search`, `indy_search_symbol`, `indy_get_file`, `indy_list_repos`, `indy_status`, `indy_refresh`, `indy_get_dependencies`.
+Agents consume indy by shelling out to the CLI (e.g. `indy search "q" --json`), not via an MCP
+server. Read commands (`search`, `status`, `repos`, `symbol`, `deps`) take `--json` for
+machine-readable output.
 
 ## Batch Re-indexing
 

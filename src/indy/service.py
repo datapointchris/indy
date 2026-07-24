@@ -1,5 +1,5 @@
 """All meaningful operations: indexing, searching, status.
-CLI and MCP are thin wrappers around these functions."""
+The CLI is a thin wrapper around these functions."""
 
 import hashlib
 import subprocess
@@ -292,14 +292,6 @@ def search_symbol(name: str, repo: str | None = None) -> list[dict]:
         return expand_result_paths(get_chunks_by_symbol(conn, name, repo=repo))
     finally:
         conn.close()
-
-
-def get_file_content(file_path: str) -> str | None:
-    """Read a file directly from disk. Verifies the file exists; returns None if not."""
-    path = Path(expand_path(file_path))
-    if not path.exists():
-        return None
-    return path.read_text(encoding='utf-8', errors='ignore')
 
 
 def get_status() -> dict:
