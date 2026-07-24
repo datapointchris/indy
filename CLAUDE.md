@@ -97,6 +97,10 @@ indy search "query"            # semantic search
 indy search "q" --repo R --language python --limit 20
 indy search "q" --owned        # only your repos (owner matches top-level)
 indy search "q" --reference    # only reference repos (owner differs)
+indy symbol get_db             # exact symbol lookup by function/class name
+indy deps get_db               # reference graph: callers + callees of a symbol
+indy deps get_db -d callers    # only callers (or -d callees)
+indy search "q" --json         # machine-readable JSON (also on status/repos/symbol/deps)
 indy update                    # reinstall latest from GitHub
 indy status                    # health dashboard: totals, recent runs, error count
 indy errors                    # per-file error listing grouped by repo

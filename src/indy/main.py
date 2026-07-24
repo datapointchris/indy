@@ -28,10 +28,20 @@ indy_app = typer.Typer(name='indy', no_args_is_help=True, help='Semantic search 
 console = Console(highlight=False)
 
 
+def print_json(data: object) -> None:
+    """Emit JSON to stdout, bypassing Rich markup — the scripting/agent-facing output shared by every --json flag."""
+    print(json.dumps(data))
+
+
 @indy_app.command('status')
-def status():
+def status(
+    as_json: bool = typer.Option(False, '--json', help='Output as JSON to stdout.'),
+):
     """Show index health: totals, recent runs, and error count."""
     stats = service.get_status()
+    if as_json:
+        print_json(stats)
+        return
     repo_label = f'(across {stats["repo_count"]} repos)' if stats['repo_count'] else ''
     console.print(f'[bold]Files indexed:[/bold] {stats["total_files"]}  {repo_label}')
     console.print(f'[bold]Total chunks:[/bold]  {stats["total_chunks"]}')
@@ -176,6 +186,7 @@ def search(
     limit: int = typer.Option(10, '--limit', '-n', help='Number of results to return.'),
     owned: bool = typer.Option(False, '--owned', help='Only search your own repos.'),
     reference: bool = typer.Option(False, '--reference', help='Only search reference repos.'),
+    as_json: bool = typer.Option(False, '--json', help='Output as JSON to stdout.'),
 ):
     """Semantic search across indexed code and notes."""
     if owned and reference:
@@ -183,6 +194,12 @@ def search(
         raise typer.Exit(1)
     ownership = True if owned else (False if reference else None)
     results = service.search(query, repo=repo, language=language, limit=limit, owned=ownership)
+
+    if as_json:
+        for r in results:
+            r['score'] = round(1 - r.pop('distance'), 4)
+        print_json({'results': results})
+        return
 
     if not results:
         console.print('No results.')
@@ -196,6 +213,70 @@ def search(
         console.print(f'   {snippet}')
         if len(r['text']) > 300:
             console.print('   …')
+
+
+@indy_app.command('symbol')
+def symbol(
+    name: str = typer.Argument(..., help='Exact function or class name to look up.'),
+    repo: str = typer.Option(None, '--repo', '-r', help='Limit to this repo.'),
+    as_json: bool = typer.Option(False, '--json', help='Output as JSON to stdout.'),
+):
+    """Exact symbol lookup by function or class name — precise alternative to semantic search."""
+    results = service.search_symbol(name, repo=repo)
+    if as_json:
+        print_json({'results': results})
+        return
+
+    if not results:
+        console.print(f'No symbol named {name!r} found.')
+        return
+
+    for i, r in enumerate(results, 1):
+        kind = f'{r["symbol_type"]} ' if r.get('symbol_type') else ''
+        console.print(f'\n[bold cyan]{i}.[/bold cyan] {kind}[bold]{r["symbol_name"]}[/bold] — {r["file_path"]}')
+        snippet = r['text'][:300].replace('\n', '\n   ')
+        console.print(f'   {snippet}')
+        if len(r['text']) > 300:
+            console.print('   …')
+
+
+@indy_app.command('deps')
+def deps(
+    symbol_name: str = typer.Argument(..., help='Symbol to trace through the reference graph.'),
+    repo: str = typer.Option(None, '--repo', '-r', help='Limit to this repo.'),
+    direction: str = typer.Option('both', '--direction', '-d', help="'callers', 'callees', or 'both'."),
+    as_json: bool = typer.Option(False, '--json', help='Output as JSON to stdout.'),
+):
+    """Find what calls a symbol or what it calls, using the Python reference graph."""
+    if direction not in ('callers', 'callees', 'both'):
+        console.print("[red]--direction must be 'callers', 'callees', or 'both'.[/red]")
+        raise typer.Exit(1)
+
+    result = service.get_dependencies(symbol_name, repo=repo, direction=direction)
+    if as_json:
+        print_json(result)
+        return
+
+    callers = result.get('callers', [])
+    callees = result.get('callees', [])
+    if not callers and not callees:
+        console.print(f'No references found for {symbol_name!r}. (Reference graph is Python-only.)')
+        return
+
+    if 'callers' in result:
+        console.print(f'\n[bold]Callers of {symbol_name}[/bold] ({len(callers)})')
+        if not callers:
+            console.print('  (none)')
+        for c in callers:
+            console.print(f'  [cyan]{c["source_symbol"] or "?"}[/cyan] — {c["source_file"]}')
+
+    if 'callees' in result:
+        console.print(f'\n[bold]Callees of {symbol_name}[/bold] ({len(callees)})')
+        if not callees:
+            console.print('  (none)')
+        for c in callees:
+            module_prefix = f'{c["target_module"]}.' if c.get('target_module') else ''
+            console.print(f'  [cyan]{module_prefix}{c["target_symbol"]}[/cyan] — {c["source_file"]}')
 
 
 @indy_app.command('stats')
@@ -267,9 +348,14 @@ def stats(
 
 
 @indy_app.command('repos')
-def repos():
+def repos(
+    as_json: bool = typer.Option(False, '--json', help='Output as JSON to stdout.'),
+):
     """List all indexed repos with file and chunk counts."""
     repo_list = service.list_repos()
+    if as_json:
+        print_json({'repos': repo_list})
+        return
     if not repo_list:
         console.print('No repos indexed yet. Run [bold]indy index[/bold] to start.')
         return
