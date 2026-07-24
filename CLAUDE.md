@@ -27,7 +27,7 @@ main.py        CLI entry points only — thin Typer shells calling service.py.
 
 ## Storage
 
-Three tables + one virtual table in `~/dev/indy/indy.db` (SQLite, WAL mode):
+Three tables + one virtual table in `~/.local/share/indy/indy.db` (SQLite, WAL mode):
 
 ```yaml
 indexed_file      Manifest: one row per file. Tracks mtime, sha256 hash, chunk count, status.
@@ -41,7 +41,7 @@ symbol_reference  Call graph: one row per reference (import/call/inherit) extrac
                   Python-only. Indexed on source_file and target_symbol for fast caller/callee lookup.
 ```
 
-Override data dir: `INDY_DIR` env var (default `~/dev/indy/`).
+Override data dir: `INDY_DIR` env var (default `$XDG_DATA_HOME/indy/`, i.e. `~/.local/share/indy/`).
 
 ## Embeddings
 
