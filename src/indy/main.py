@@ -20,9 +20,8 @@ from rich.table import Table
 import indy.service as service
 from indy.charts import horizontal_bars
 from indy.charts import streamline
-from indy.repos import get_repo_by_name
-from indy.repos import load_active_repos
-from indy.repos import load_extra_paths
+from indy.repos import all_index_targets
+from indy.repos import get_target_by_name
 
 indy_app = typer.Typer(name='indy', no_args_is_help=True, help='Semantic search index for local codebases, docs, and notes.')
 console = Console(highlight=False)
@@ -99,8 +98,8 @@ def index(
         print_index_result(result)
 
     elif repo:
-        if get_repo_by_name(repo) is None:
-            console.print(f'[red]Repo {repo!r} not found in repos.json.[/red]')
+        if get_target_by_name(repo) is None:
+            console.print(f'[red]Repo {repo!r} not found. Exemplar clones are named owner/repo.[/red]')
             raise typer.Exit(1)
         with progress:
             task_id = progress.add_task(repo, total=None, current_file='')
@@ -108,12 +107,11 @@ def index(
         print_index_result(result)
 
     else:
-        all_targets = load_active_repos() + load_extra_paths()
         results = []
         with progress:
-            for target in all_targets:
-                task_id = progress.add_task(target['name'], total=None, current_file='')
-                result = service.index_path(target['path'], target['name'], on_progress=make_progress_callback(task_id))
+            for target in all_index_targets():
+                task_id = progress.add_task(target.name, total=None, current_file='')
+                result = service.index_path(target.path, target.name, on_progress=make_progress_callback(task_id), exclude=target.exclude)
                 results.append(result)
                 progress.remove_task(task_id)
         for result in results:
@@ -287,8 +285,8 @@ def stats(
     if repo:
         history = service.repo_scan_history(repo)
         if not history:
-            if get_repo_by_name(repo) is None:
-                console.print(f'[red]Repo {repo!r} not found in repos.json.[/red]')
+            if get_target_by_name(repo) is None:
+                console.print(f'[red]Repo {repo!r} not found. Exemplar clones are named owner/repo.[/red]')
             else:
                 console.print(f'No scan history for {repo!r}. Run [bold]indy index {repo}[/bold] first.')
             raise typer.Exit(1)

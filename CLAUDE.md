@@ -16,8 +16,9 @@ chunker.py     Chunking strategies per content type:
                - Prose (md/rst/txt): paragraph-aware splitter
                - Config (yaml/toml/json): whole-file if small, code-split if large
                - Other code: recursive character splitter
-repos.py       Reads ~/dev/repos.json, returns active repos + configured extra paths.
-               Resolves repo ownership (owned vs reference) from per-repo owner field.
+repos.py       Reads both registries and returns IndexTarget records (name, path, kind,
+               exclude). ~/dev/repos.json = the portfolio; ~/dev/exemplar-repos.json =
+               third-party clones kept as code exemplars. Also owns is_excluded().
 config.py      Constants and env var overrides (INDY_DIR, OLLAMA_HOST, OLLAMA_MODEL, etc.).
 charts.py      Terminal chart primitives (horizontal bars, vertical bars, streamline) using Rich + Unicode.
 main.py        CLI entry points only — thin Typer shells calling service.py.
@@ -51,21 +52,33 @@ Override: `OLLAMA_HOST`, `OLLAMA_MODEL`, `EMBEDDING_DIM`.
 Ollama must be running before any index or search operation. Start with `ollama serve` or
 `brew services start ollama`. Model weights stored at `$XDG_DATA_HOME/ollama/models`.
 
-## Repo Ownership
+## Two Registries
 
-repos.json has a top-level `owner` field (default: `datapointchris`). Each repo can optionally
-set its own `owner`. Repos matching the top-level owner (or with no explicit owner) are "owned";
-repos with a different owner are "reference" — third-party code cloned for study.
+`~/dev/repos.json` holds the portfolio — repos we work in. `~/dev/exemplar-repos.json` holds
+third-party clones kept to be *read* as examples of specific patterns; each entry carries
+`exemplary_for` (what it demonstrates) and `index_exclude` (subtrees to keep out of the index).
+They are separate files because the two answer different questions and need different fields.
 
-Search supports `--owned` / `--reference` flags to filter by ownership. Default is to search all repos.
+**Exemplars are indexed under a qualified `owner/name`.** Bare names collide across the two
+registries — `~/homelab` and khuedoan's clone are both `homelab` — which previously merged both
+repos' chunks under one label and put that name in *both* the owned and reference sets, so
+`--owned` returned a stranger's code.
+
+Search supports `--owned` / `--reference` to filter. Default is to search everything.
 
 ## What Gets Indexed
 
-Active repos from `~/dev/repos.json` plus paths in `EXTRA_PATHS_RAW` (default: `~/notes/dev/`).
+Active repos from `~/dev/repos.json`, exemplar clones from `~/dev/exemplar-repos.json`, plus
+paths in `EXTRA_PATHS_RAW` (default: `~/notes/dev/`).
 
 File inclusion: `.py .go .js .ts .tsx .sh .rs .rb` (code), `.md .rst .txt` (prose), `.yaml .yml .toml .json` (config).
 Always skip: `.git/ node_modules/ __pycache__ .venv/ dist/ build/` dirs; `*.lock` files; files > 500KB.
 For git repos, `.gitignore` is respected via `git ls-files`. Non-git paths fall back to directory walking.
+
+Per-target `index_exclude` patterns apply on top, using gitignore semantics: patterns in order,
+leading `!` re-includes, last match wins. This is what a global skip-list cannot express — FastAPI
+ships 14 doc translations, so `docs/*/**` then `!docs/en/**` keeps the 154 English pages and drops
+1501 near-duplicates. Across the exemplar corpus these patterns cut 33% of indexed files.
 
 ## Key Decisions
 
@@ -79,9 +92,12 @@ For git repos, `.gitignore` is respected via `git ls-files`. Non-git paths fall 
   reference extraction for those languages is deferred. Python AST covers the primary use case.
 - **target_module captured for attribute calls** — `storage.get_db()` stores target_module="storage",
   helping disambiguate when multiple functions share a name across modules.
-- **Ownership resolved at service layer, not storage** — repos.json maps repo name → owner.
-  service.py resolves `--owned`/`--reference` into a set of repo names and passes it to storage
-  as a generic filter. Storage knows nothing about ownership.
+- **Ownership resolved at service layer, not storage** — service.py resolves `--owned`/`--reference`
+  into a set of repo names and passes it to storage as a generic filter. Storage knows nothing
+  about ownership.
+- **Exemplars live in their own registry, not an `owner` field on repos.json** — an exemplar needs
+  fields a worked-in repo has no business carrying (`exemplary_for`, `index_exclude`), and keeping
+  them in one file forced an owner-as-marker hack that still left the name collision unsolved.
 
 ## CLI
 

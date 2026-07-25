@@ -24,11 +24,11 @@ from indy.config import SKIP_DIRS
 from indy.config import SKIP_FILES
 from indy.config import compact_path
 from indy.config import expand_path
+from indy.repos import all_index_targets
+from indy.repos import get_exemplar_repo_names
 from indy.repos import get_owned_repo_names
-from indy.repos import get_reference_repo_names
-from indy.repos import get_repo_by_name
-from indy.repos import load_active_repos
-from indy.repos import load_extra_paths
+from indy.repos import get_target_by_name
+from indy.repos import is_excluded
 from indy.storage import delete_error_files
 from indy.storage import delete_file_chunks
 from indy.storage import delete_file_references
@@ -95,13 +95,21 @@ def list_git_files(root: Path) -> list[str] | None:
     return result.stdout.splitlines()
 
 
-def collect_indexable_files(root: Path) -> list[Path]:
-    """Collect all files to index under root, respecting .gitignore for git repos."""
+def collect_indexable_files(root: Path, exclude: tuple[str, ...] = ()) -> list[Path]:
+    """Collect all files to index under root, respecting .gitignore for git repos.
+
+    `exclude` holds the target's own gitignore-style patterns, applied on top of the
+    global SKIP_DIRS. Per-repo patterns are what a global set cannot express: a repo
+    whose docs tree is 91% translations needs that tree dropped without dropping docs
+    everywhere else.
+    """
     git_files = list_git_files(root)
     if git_files is not None:
         files = []
         for rel_path in git_files:
             filepath = root / rel_path
+            if is_excluded(rel_path, exclude):
+                continue
             if filepath.exists() and not is_in_skip_dir(filepath, root) and should_index(filepath):
                 files.append(filepath)
         return files
@@ -111,17 +119,24 @@ def collect_indexable_files(root: Path) -> list[Path]:
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for filename in filenames:
             filepath = dirpath / filename
+            if is_excluded(str(filepath.relative_to(root)), exclude):
+                continue
             if should_index(filepath):
                 files.append(filepath)
     return files
 
 
-def index_path(root: Path, repo_name: str, on_progress: Callable[[int, int, str], None] | None = None) -> dict:
+def index_path(
+    root: Path,
+    repo_name: str,
+    on_progress: Callable[[int, int, str], None] | None = None,
+    exclude: tuple[str, ...] = (),
+) -> dict:
     """Walk root, embed changed files, update the index manifest. Returns a stats dict.
 
     on_progress(files_scanned, total_files, current_file) is called before processing each file.
     """
-    indexable_files = collect_indexable_files(root)
+    indexable_files = collect_indexable_files(root, exclude)
     total_files = len(indexable_files)
     conn = get_db()
     now = datetime.now(UTC).isoformat()
@@ -240,17 +255,15 @@ def index_path(root: Path, repo_name: str, on_progress: Callable[[int, int, str]
 
 
 def index_repo(repo_name: str, on_progress: Callable[[int, int, str], None] | None = None) -> dict:
-    repo = get_repo_by_name(repo_name)
-    if repo is None:
+    target = get_target_by_name(repo_name)
+    if target is None:
         raise ValueError(f'Repo {repo_name!r} not found in active repos')
-    return index_path(repo['path'], repo_name, on_progress=on_progress)
+    return index_path(target.path, target.name, on_progress=on_progress, exclude=target.exclude)
 
 
 def index_all(on_progress: Callable[[int, int, str], None] | None = None) -> list[dict]:
-    """Index all active repos from repos.json plus configured extra paths."""
-    results = [index_path(repo['path'], repo['name'], on_progress=on_progress) for repo in load_active_repos()]
-    results += [index_path(ep['path'], ep['name'], on_progress=on_progress) for ep in load_extra_paths()]
-    return results
+    """Index every target: portfolio repos, exemplar clones, and configured extra paths."""
+    return [index_path(target.path, target.name, on_progress=on_progress, exclude=target.exclude) for target in all_index_targets()]
 
 
 def expand_result_paths(results: list[dict], key: str = 'file_path') -> list[dict]:
@@ -267,7 +280,7 @@ def resolve_ownership_filter(owned: bool | None) -> set[str] | None:
         return None
     if owned:
         return get_owned_repo_names()
-    return get_reference_repo_names()
+    return get_exemplar_repo_names()
 
 
 def search(

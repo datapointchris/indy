@@ -8,6 +8,12 @@ LOG_PATH = INDY_DIR / 'indy.log'
 
 REPOS_FILE = Path(os.environ.get('INDY_REPOS_FILE', Path.home() / 'dev' / 'repos.json'))
 
+# Third-party clones kept as code exemplars. Separate from repos.json because the two
+# answer different questions and need different fields: an exemplar carries what it is
+# exemplary for and which subtrees to keep out of the index, neither of which belongs
+# on a repo we actually work in.
+EXEMPLAR_REPOS_FILE = Path(os.environ.get('INDY_EXEMPLAR_REPOS_FILE', Path.home() / 'dev' / 'exemplar-repos.json'))
+
 # Non-repo paths included in default 'indy index' runs (alongside repos.json).
 # Override with INDY_EXTRA_PATHS as JSON: '[{"name":"notes-dev","path":"~/notes/dev"}]'
 EXTRA_PATHS_RAW: list[dict] = json.loads(os.environ.get('INDY_EXTRA_PATHS', '[{"name": "notes-dev", "path": "~/notes/dev"}]'))
