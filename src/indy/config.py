@@ -15,8 +15,14 @@ REPOS_FILE = Path(os.environ.get('INDY_REPOS_FILE', Path.home() / 'dev' / 'repos
 EXEMPLAR_REPOS_FILE = Path(os.environ.get('INDY_EXEMPLAR_REPOS_FILE', Path.home() / 'dev' / 'exemplar-repos.json'))
 
 # Non-repo paths included in default 'indy index' runs (alongside repos.json).
-# Override with INDY_EXTRA_PATHS as JSON: '[{"name":"notes-dev","path":"~/notes/dev"}]'
-EXTRA_PATHS_RAW: list[dict] = json.loads(os.environ.get('INDY_EXTRA_PATHS', '[{"name": "notes-dev", "path": "~/notes/dev"}]'))
+# The Syncthing-synced personal-knowledge dirs, which hold the reasoning behind decisions
+# that no repo records. ~/shart is deliberately absent: it holds recovery codes and key
+# material in .txt files, which DOC_EXTENSIONS would otherwise pull into the index.
+# Override with INDY_EXTRA_PATHS as JSON: '[{"name":"notes","path":"~/notes"}]'
+DEFAULT_EXTRA_PATHS = (
+    '[{"name": "obsession", "path": "~/obsession"}, {"name": "notes", "path": "~/notes"}, {"name": "dev", "path": "~/dev"}]'
+)
+EXTRA_PATHS_RAW: list[dict] = json.loads(os.environ.get('INDY_EXTRA_PATHS', DEFAULT_EXTRA_PATHS))
 
 # Ollama embedding config — httpx calls, no Python package needed
 OLLAMA_HOST = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')

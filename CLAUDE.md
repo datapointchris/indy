@@ -69,7 +69,14 @@ Search supports `--owned` / `--reference` to filter. Default is to search everyt
 ## What Gets Indexed
 
 Active repos from `~/dev/repos.json`, exemplar clones from `~/dev/exemplar-repos.json`, plus
-paths in `EXTRA_PATHS_RAW` (default: `~/notes/dev/`).
+paths in `EXTRA_PATHS_RAW` (default: `~/obsession`, `~/notes`, `~/dev` — the Syncthing-synced
+personal-knowledge dirs). `~/shart` is deliberately excluded: it holds recovery codes and key
+material in `.txt` files that `DOC_EXTENSIONS` would otherwise pull in.
+
+**Index on Arch, never on macOS.** Embedding throughput on the Intel Macs is bad enough to make
+a full run unusable. `~/dev/indy/indy.db` is inside the Syncthing-synced `~/dev/`, and chunk
+paths are stored `~`-relative (`compact_path`), so an index built on `archlinux` propagates to
+every machine. One machine indexes; all machines search.
 
 File inclusion: `.py .go .js .ts .tsx .sh .rs .rb` (code), `.md .rst .txt` (prose), `.yaml .yml .toml .json` (config).
 Always skip: `.git/ node_modules/ __pycache__ .venv/ dist/ build/` dirs; `*.lock` files; files > 500KB.

@@ -9,7 +9,7 @@ Local-first: sqlite-vec for vector storage, ollama for embeddings. No external A
 ```bash
 indy index                     # index all active repos from ~/dev/repos.json
 indy index ichrisbirch         # index a single repo by name
-indy index --path ~/notes/dev/ # index an arbitrary path
+indy index --path ~/notes/     # index an arbitrary path (run on Arch, not macOS)
 indy search "query"            # semantic search across all indexed content
 indy search "query" --repo indy --language python
 indy search "query" --owned    # only your repos
