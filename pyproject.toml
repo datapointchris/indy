@@ -11,6 +11,7 @@ dependencies = [
     "rich>=13.0.0",
     "sqlite-vec>=0.1",
     "httpx>=0.27.0",
+    "pyselfupdate[typer]>=0.2.0",
     "tree-sitter>=0.21",
     "tree-sitter-go>=0.25.0",
     "tree-sitter-typescript>=0.23.2",
@@ -102,3 +103,16 @@ build-backend = "uv_build"
 [tool.uv.build-backend]
 module-name = "indy"
 module-root = "src"
+
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
+branch = "main"
+commit_message = "build(release): {version}"
+# The package name is hardcoded on purpose. python-semantic-release sets no
+# $PACKAGE_NAME, so `uv lock --upgrade-package "$PACKAGE_NAME"` silently no-ops
+# and ships a stale lock file in the release commit.
+build_command = """
+    pip install uv
+    uv lock --upgrade-package indy
+    git add uv.lock
+"""

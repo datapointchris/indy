@@ -1,13 +1,14 @@
 import importlib.metadata
 import json
-import re
 import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
 
-import httpx
 import typer
+from pyselfupdate import Config
+from pyselfupdate import notify
+from pyselfupdate.typercmd import run_update
 from rich.console import Console
 from rich.progress import BarColumn
 from rich.progress import MofNCompleteColumn
@@ -25,6 +26,44 @@ from indy.repos import get_target_by_name
 
 indy_app = typer.Typer(name='indy', no_args_is_help=True, help='Semantic search index for local codebases, docs, and notes.')
 console = Console(highlight=False)
+
+
+def _github_token() -> str:
+    """A GitHub credential from the gh CLI.
+
+    indy's repository is private, so the release lookup is a 404 without one and
+    pyselfupdate reads that as "no release". pyselfupdate already checks
+    $GITHUB_TOKEN and $GH_TOKEN itself, so this only adds the third source.
+
+    Passed as `token_func` rather than `token` because it spawns a subprocess.
+    This config is built at import, and the notify gate resolves it on every
+    invocation to decline most of them in microseconds — an eager `gh auth
+    token` would put a process spawn in front of every indy command.
+    """
+    result = subprocess.run(  # nosec B603 B607
+        ['gh', 'auth', 'token'],
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ''
+
+
+# Shared by the `update` command and the daily check below, so the notice cannot
+# name a release the update command would not install.
+UPDATE_CONFIG = Config(tool='indy', owner='datapointchris', token_func=_github_token)
+
+
+@indy_app.callback()
+def _root(ctx: typer.Context) -> None:
+    """Root callback, here only to host the daily update check.
+
+    Never raises and never prints an error; the notice is deferred to exit so it
+    lands after the command's own output. `indy update` is the only place an
+    update failure is reported, and is skipped here because it is about to do
+    the thing the notice would suggest.
+    """
+    if ctx.invoked_subcommand != 'update':
+        notify(UPDATE_CONFIG)
 
 
 def print_json(data: object) -> None:
@@ -369,58 +408,11 @@ def repos(
 
 
 @indy_app.command('update')
-def update():
-    """Reinstall the latest version of indy from GitHub."""
-    current_hash = get_installed_commit_hash()
-
-    with console.status('Updating from GitHub...'):
-        result = subprocess.run(  # nosec B603 B607
-            ['uv', 'tool', 'install', '--reinstall', 'git+https://github.com/datapointchris/indy'],
-            capture_output=True,
-            text=True,
-        )
-
-    if result.returncode != 0:
-        console.print(f'✗ indy upgrade failed: {result.stderr.strip()}')
-        raise typer.Exit(1)
-
-    uv_output = result.stderr + result.stdout
-    hash_match = re.search(r'Updated.*indy\s+\(([0-9a-f]{8,40})\)', uv_output)
-    new_hash = hash_match.group(1) if hash_match else None
-
-    if current_hash and new_hash and (current_hash.startswith(new_hash) or new_hash.startswith(current_hash)):
-        console.print(f'✓ indy already at latest: {new_hash[:8]}')
-        return
-
-    if current_hash and new_hash:
-        console.print(f'✓ indy upgraded: {current_hash[:8]} → {new_hash[:8]}')
-        subjects = fetch_github_changes('datapointchris', 'indy', current_hash, new_hash)
-        if subjects:
-            console.print()
-            console.print('Changes:')
-            for s in subjects:
-                console.print(f'  • {s}')
-    else:
-        console.print('✓ indy upgraded')
-
-
-def fetch_github_changes(owner: str, repo: str, from_ref: str, to_ref: str) -> list[str]:
-    """Fetch commit subjects between two refs via GitHub compare API."""
-    url = f'https://api.github.com/repos/{owner}/{repo}/compare/{from_ref}...{to_ref}'
-    try:
-        resp = httpx.get(url, headers={'Accept': 'application/vnd.github+json'}, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-    except (httpx.HTTPError, ValueError):
-        return []
-
-    subjects: list[str] = []
-    for c in data.get('commits', []):
-        message = c.get('commit', {}).get('message', '')
-        subject = message.split('\n', 1)[0].strip()
-        if subject:
-            subjects.append(subject)
-    return subjects
+def update(
+    check_only: bool = typer.Option(False, '--check', help='Report whether an update is available without installing it'),
+) -> None:
+    """Update indy to the latest published release."""
+    run_update(UPDATE_CONFIG, check_only=check_only)
 
 
 def get_installed_commit_hash() -> str | None:
