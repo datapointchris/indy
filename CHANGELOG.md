@@ -1,6 +1,29 @@
 # CHANGELOG
 
 
+## v0.1.2 (2026-07-31)
+
+### Bug Fixes
+
+- **ci**: Validate on push, not only via a release call
+  ([`054f5db`](https://github.com/datapointchris/indy/commit/054f5db8131cb9aaea5608ce89e8e56efcb9d314))
+
+The workflow triggered on pull_request and workflow_call. Development here is trunk-based, so the
+  only trigger that ever fired was this repo's release pipeline calling it, and the checks ran as
+  part of a release rather than as a gate on the push itself.
+
+### Chores
+
+- **config**: Record the keys the pyproject sync owns
+  ([`13a2030`](https://github.com/datapointchris/indy/commit/13a20309381bb8d61c51565a76d4d253da606810))
+
+forge now writes [tool.forge] managed, listing the exact keys the standard sets. Deletion on a later
+  sync is scoped to that record, so dropping a key from the template retracts it here without having
+  to guess which settings belong to this project.
+
+Purely additive: nothing else in this file changed.
+
+
 ## v0.1.1 (2026-07-31)
 
 ### Bug Fixes
