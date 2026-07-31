@@ -8,7 +8,6 @@ try:
     import tree_sitter_typescript as _tsts
     from tree_sitter import Language as _Language
     from tree_sitter import Node as _Node
-    from tree_sitter import Parser as _Parser
 
     _TS_LANGUAGES: dict[str, _Language] = {
         'go': _Language(_tsgo.language()),
@@ -16,9 +15,11 @@ try:
         'typescript': _Language(_tsts.language_typescript()),
         'tsx': _Language(_tsts.language_tsx()),
     }
-    _TS_AVAILABLE = True
 except ImportError:
-    _TS_AVAILABLE = False
+    # An empty table is the whole fallback: every lookup misses and sends the
+    # file to chunk_code. A separate availability flag cannot narrow the names
+    # this branch leaves unbound, which is how the NameError hid here.
+    _TS_LANGUAGES = {}
 
 from indy.config import CODE_CHUNK_OVERLAP
 from indy.config import CODE_CHUNK_SIZE
@@ -391,17 +392,19 @@ def ts_walk(
 def chunk_treesitter(file_path: str, content: str, repo: str, language: str | None) -> list[Chunk]:
     """AST chunking via tree-sitter for Go, TypeScript, and Rust.
     Falls back to recursive code splitter if tree-sitter packages are not installed."""
-    if not _TS_AVAILABLE:
-        return chunk_code(file_path, content, repo, language)
-
     # .tsx files share the 'typescript' language label but need the tsx grammar
     lang_key = 'tsx' if file_path.endswith('.tsx') else language
     ts_language = _TS_LANGUAGES.get(lang_key or '')
     if ts_language is None:
         return chunk_code(file_path, content, repo, language)
 
+    # Imported here rather than above: a hit in _TS_LANGUAGES is proof the
+    # package imported, which a module-level name would not carry to either
+    # type checker.
+    from tree_sitter import Parser
+
     extract_types = _TS_EXTRACT_TYPES.get(lang_key or '', set())
-    parser = _Parser(ts_language)
+    parser = Parser(ts_language)
     tree = parser.parse(bytes(content, 'utf-8'))
 
     chunks: list[Chunk] = []
