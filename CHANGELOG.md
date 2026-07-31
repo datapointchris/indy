@@ -1,6 +1,51 @@
 # CHANGELOG
 
 
+## v0.1.1 (2026-07-31)
+
+### Bug Fixes
+
+- **chunker**: Fall back when tree-sitter is missing
+  ([`6e8a066`](https://github.com/datapointchris/indy/commit/6e8a066431b82f387a3b8ae132752757c86cc398))
+
+The except ImportError branch left _Parser unbound while setting a flag that claimed to cover it. A
+  bool cannot narrow a name, so chunk_treesitter passed its own guard with the grammars absent and
+  raised NameError instead of falling back to chunk_code.
+
+An empty _TS_LANGUAGES is the entire fallback on its own -- every lookup misses and returns
+  chunk_code -- so the flag went with it, and Parser is imported where a table hit already proves
+  the package loaded.
+
+### Chores
+
+- **config**: Adopt the standard pyright section
+  ([`658d10c`](https://github.com/datapointchris/indy/commit/658d10c4864da7420689c43916abc075c8f800fb))
+
+Synced from forge's pyproject template via sync-pyproject. basedpyright defaults to typeCheckingMode
+  "recommended", which enables its own strict rules; repos were answering that one rule at a time.
+  "standard" turns the whole family off at once.
+
+The rules only take effect from a config file: pyright discards LSP client settings entirely once a
+  project config exists, so the nvim-side ignore never applied here.
+
+### Continuous Integration
+
+- Add generated validate.yml and gate release on it
+  ([`f646eef`](https://github.com/datapointchris/indy/commit/f646eeffabbd77c7616b11e1d55315083456c21c))
+
+Release triggered on push to main with no validation at all, so it published whatever was on main.
+  Adds the forge-generated CI block (ruff check, ruff format, mypy, pytest) and makes release depend
+  on it.
+
+Verified locally before wiring the gate: all four checks pass.
+
+- Regenerate validate.yml at toolchain 6
+  ([`552467d`](https://github.com/datapointchris/indy/commit/552467d7a40e03d266f265533c9e504a8f3acd47))
+
+Stamp only — the python block is unchanged. Toolchain 6 adds the pinned release-binary mechanism and
+  the shell CI block.
+
+
 ## v0.1.0 (2026-07-27)
 
 ### Bug Fixes
