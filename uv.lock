@@ -166,7 +166,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27.0" },
-    { name = "pyselfupdate", extras = ["typer"], specifier = ">=0.2.0" },
+    { name = "pyselfupdate", extras = ["typer"], specifier = ">=0.2.2" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "sqlite-vec", specifier = ">=0.1" },
     { name = "tree-sitter", specifier = ">=0.21" },
@@ -378,11 +378,11 @@ wheels = [
 
 [[package]]
 name = "pyselfupdate"
-version = "0.2.0"
+version = "0.2.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/9a/af/6bda7cb41a2760b48a66c3673b2869a416541664923162c768c42bc12302/pyselfupdate-0.2.0.tar.gz", hash = "sha256:091bb07df67ef26ac9620fae385b3cceb2902d1c165f775eacd8fd3fe42547e9", size = 20127, upload-time = "2026-07-27T04:57:46.57Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/5c/e04d57be6b1ef112af6f7f2cbbdfca24422c3d2d1693e75a13a11a557c00/pyselfupdate-0.2.2.tar.gz", hash = "sha256:4c7ae5ef33c7236486e0dfafd4e450d3f8bf68a94dc61feeb9959fc376f1ed0e", size = 22088, upload-time = "2026-08-04T22:05:12.655Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/91/31/ecd642b165ccf6d78f550cd1c1b444d53cb9f7454896c8e694d827c1f9fb/pyselfupdate-0.2.0-py3-none-any.whl", hash = "sha256:5bef537e6c9ca09406aab1c9881246c43e216518cd33e2fc3220a89c23bf52e7", size = 25379, upload-time = "2026-07-27T04:57:45.658Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/24/92e4b0fd575e537488ef0fce2fee36adb0ec058ac42d083796264101029c/pyselfupdate-0.2.2-py3-none-any.whl", hash = "sha256:2a99d98714ebdd33bd2cfdae1fba32027525c10f3aac0084459a3a352da373b1", size = 26550, upload-time = "2026-08-04T22:05:11.802Z" },
 ]
 
 [package.optional-dependencies]
