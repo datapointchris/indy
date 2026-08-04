@@ -1,6 +1,39 @@
 # CHANGELOG
 
 
+## v0.1.4 (2026-08-04)
+
+### Bug Fixes
+
+- Report the update in the verb that ran it
+  ([`479e837`](https://github.com/datapointchris/indy/commit/479e83755466c4a44745541ac7d97e47d29ba0fc))
+
+pyselfupdate 0.2.2 says "updated" and "update failed" where it used to say "upgraded" and "upgrade
+  failed". The command is `update`; one command, one vocabulary.
+
+### Chores
+
+- **toolchain**: Adopt the generated configs and CI
+  ([`eb832c9`](https://github.com/datapointchris/indy/commit/eb832c9b2627aca603ac2c66579448d525590d0b))
+
+Brings the repo onto forge toolchain manifest 11.
+
+bandit, refurb and pyupgrade drop out: pyupgrade is ruff's UP rules, already selected, and the other
+  two are the manifest's deliberate narrowing to the rule set every repo actually runs.
+
+### Documentation
+
+- Flush dormant markdownlint violations
+  ([`d0f21eb`](https://github.com/datapointchris/indy/commit/d0f21eb4096df11f13b33c8389db1e02c20a7a60))
+
+markdownlint only runs on the files a commit touches, so unmodified docs accumulate violations
+  invisibly. The toolchain sync bumps markdownlint to v0.47, which added MD060, and runs --all-files
+  — surfacing every one of them at once, in the middle of an unrelated change.
+
+Table separators are normalized to the compact `| --- |` style MD060 expects, which --fix cannot
+  repair; everything else is markdownlint --fix.
+
+
 ## v0.1.3 (2026-07-31)
 
 ### Bug Fixes
