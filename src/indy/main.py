@@ -4,6 +4,7 @@ import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Annotated
 
 import typer
 from pyselfupdate import Config
@@ -53,9 +54,28 @@ def _github_token() -> str:
 UPDATE_CONFIG = Config(tool='indy', owner='datapointchris', token_func=_github_token)
 
 
+def _version_callback(asked: bool) -> None:
+    """`indy --version`, in the one line every CLI here answers it with."""
+    if not asked:
+        return
+    try:
+        version = importlib.metadata.version('indy')
+    except importlib.metadata.PackageNotFoundError:
+        version = 'unknown'
+    commit = get_installed_commit_hash()
+    console.print(f'indy {version}{f" @ {commit[:8]}" if commit else ""}')
+    raise typer.Exit()
+
+
 @indy_app.callback()
-def _root(ctx: typer.Context) -> None:
-    """Root callback, here only to host the daily update check.
+def _root(
+    ctx: typer.Context,
+    version: Annotated[
+        bool | None,
+        typer.Option('--version', callback=_version_callback, is_eager=True, help='Show the installed version and exit.'),
+    ] = None,
+) -> None:
+    """Root callback, hosting the daily update check and app-level options.
 
     Never raises and never prints an error; the notice is deferred to exit so it
     lands after the command's own output. `indy update` is the only place an
