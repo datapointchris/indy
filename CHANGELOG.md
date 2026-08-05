@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v0.2.0 (2026-08-05)
+
+### Features
+
+- **cli**: Answer --version, like the rest of the fleet
+  ([`ede1266`](https://github.com/datapointchris/indy/commit/ede1266df1a2e218c08f8810d81ef745e949da03))
+
+indy was one of the CLIs that could not say which build was running, even though the hard half was
+  already here: `get_installed_commit_hash` was written, tested by nothing and called by nothing. It
+  is wired to an eager root option now, printing `indy <version>` with the commit appended when uv
+  installed from a git ref.
+
+The rule and its reasoning are in `~/dev/standards/cli-design.md` § "`--version` on every CLI".
+
+Also the first CLI test in this repo, covering the two things a caller shelling out to indy relies
+  on: the version line, and help plus exit 2 on a bare invocation.
+
+
 ## v0.1.4 (2026-08-04)
 
 ### Bug Fixes
