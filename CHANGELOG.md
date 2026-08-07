@@ -1,6 +1,20 @@
 # CHANGELOG
 
 
+## v0.3.1 (2026-08-07)
+
+### Bug Fixes
+
+- **update**: Drop the private-repo token workaround
+  ([`fe1bd8d`](https://github.com/datapointchris/indy/commit/fe1bd8d892870ccc7cb41e539029fc7511a4dfc3))
+
+The repository is public, so the release lookup no longer 404s without credentials and pyselfupdate
+  finds releases on its own. Removing the `gh auth token` subprocess means self-update works on any
+  machine rather than only where the gh CLI is logged in.
+
+Verified with GITHUB_TOKEN and GH_TOKEN unset.
+
+
 ## v0.3.0 (2026-08-07)
 
 ### Chores
