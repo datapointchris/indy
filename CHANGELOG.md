@@ -1,6 +1,43 @@
 # CHANGELOG
 
 
+## v0.3.0 (2026-08-07)
+
+### Chores
+
+- Add the MIT license file
+  ([`f8fda12`](https://github.com/datapointchris/indy/commit/f8fda12be50332b0cee9401718d222afcacc7fc6))
+
+pyproject.toml has declared MIT since the first release, but no LICENSE file shipped, so the terms
+  were only visible to someone reading the packaging metadata.
+
+- **lint**: Disable SC1091/SC1090 from the forge toolchain
+  ([`ae92204`](https://github.com/datapointchris/indy/commit/ae92204f28d8215567711d1bb3e04c0bec146401))
+
+### Features
+
+- **config**: Resolve settings from config.toml
+  ([`e772d7f`](https://github.com/datapointchris/indy/commit/e772d7f8bb6f703c36c8192757244c6312e1dd39))
+
+Defaults named a particular machine: the DB in ~/dev/indy, the registries in ~/dev, and ~/obsession,
+  ~/notes and ~/dev as extra index paths. A comment in config.py went further and recorded which
+  personal directory holds recovery codes, to explain why it was excluded.
+
+Every setting now resolves environment variable -> $XDG_CONFIG_HOME/indy/ config.toml -> a default
+  under indy's own XDG dirs, so nothing in the repo knows about any directory layout. The index
+  defaults to $XDG_DATA_HOME/indy; data_dir points it at a replicated tree for setups that index on
+  one machine and search from all of them, which is what the reverted 351dd74 could not express when
+  the location was a constant.
+
+Add `indy config`, which prints each resolved value beside the layer that supplied it. An index that
+  searches nothing is nearly always a config file that was never read rather than a wrong path, and
+  that is invisible otherwise.
+
+Checkpoint the WAL (PRAGMA wal_checkpoint(TRUNCATE)) at the end of every index run. WAL mode leaves
+  the newest commits in indy.db-wal, so anything copying indy.db alone - a backup, or a sync peer
+  replicating to a machine that only searches - otherwise lands on the state before the last run.
+
+
 ## v0.2.0 (2026-08-05)
 
 ### Features
