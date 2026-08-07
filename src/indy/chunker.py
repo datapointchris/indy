@@ -28,6 +28,7 @@ from indy.config import CONFIG_EXTENSIONS
 from indy.config import DOC_EXTENSIONS
 from indy.config import PROSE_CHUNK_OVERLAP
 from indy.config import PROSE_CHUNK_SIZE
+from indy.config import WHOLE_FILE_MAX_CHARS
 
 LANGUAGE_MAP = {
     '.py': 'python',
@@ -321,8 +322,14 @@ def chunk_prose(file_path: str, content: str, repo: str, language: str | None) -
 
 
 def chunk_config(file_path: str, content: str, repo: str, language: str | None) -> list[Chunk]:
-    """Whole-file for small configs; code-split for large ones (> 300 lines)."""
-    if len(content.splitlines()) <= 300:
+    """Whole-file for small configs; code-split for large ones.
+
+    Line count alone lets a single-line file through at any size — minified JSON and
+    tokei output are one line and tens of kilobytes, which the embedding model rejects
+    outright. Every other chunker caps its output, so this branch is the only one that
+    can emit an oversized chunk.
+    """
+    if len(content.splitlines()) <= 300 and len(content) <= WHOLE_FILE_MAX_CHARS:
         if content.strip():
             return [Chunk(text=content, file_path=file_path, repo=repo, language=language, symbol_type='prose')]
         return []

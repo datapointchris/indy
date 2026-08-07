@@ -128,3 +128,8 @@ CODE_CHUNK_SIZE = 600
 CODE_CHUNK_OVERLAP = 80
 PROSE_CHUNK_SIZE = 400
 PROSE_CHUNK_OVERLAP = 50
+
+# nomic-embed-text runs at a 2048-token context under ollama, which 500s rather than
+# truncating. Measured boundary is ~10,000 chars of prose; this leaves headroom for
+# dense content like minified JSON, which tokenizes closer to 2 chars per token.
+WHOLE_FILE_MAX_CHARS = 4_000
