@@ -1,6 +1,5 @@
 import importlib.metadata
 import json
-import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -29,29 +28,9 @@ indy_app = typer.Typer(name='indy', no_args_is_help=True, help='Semantic search 
 console = Console(highlight=False)
 
 
-def _github_token() -> str:
-    """A GitHub credential from the gh CLI.
-
-    indy's repository is private, so the release lookup is a 404 without one and
-    pyselfupdate reads that as "no release". pyselfupdate already checks
-    $GITHUB_TOKEN and $GH_TOKEN itself, so this only adds the third source.
-
-    Passed as `token_func` rather than `token` because it spawns a subprocess.
-    This config is built at import, and the notify gate resolves it on every
-    invocation to decline most of them in microseconds — an eager `gh auth
-    token` would put a process spawn in front of every indy command.
-    """
-    result = subprocess.run(  # nosec B603 B607
-        ['gh', 'auth', 'token'],
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout.strip() if result.returncode == 0 else ''
-
-
 # Shared by the `update` command and the daily check below, so the notice cannot
 # name a release the update command would not install.
-UPDATE_CONFIG = Config(tool='indy', owner='datapointchris', token_func=_github_token)
+UPDATE_CONFIG = Config(tool='indy', owner='datapointchris')
 
 
 def _version_callback(asked: bool) -> None:
