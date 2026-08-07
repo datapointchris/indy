@@ -1,6 +1,36 @@
 # CHANGELOG
 
 
+## v0.4.0 (2026-08-07)
+
+### Bug Fixes
+
+- **chunker**: Cap whole-file config chunks by character count
+  ([`dfd459e`](https://github.com/datapointchris/indy/commit/dfd459ef48f42b093453ce78c1a93e7f5351b459))
+
+chunk_config gated the whole-file path on line count alone, so a one-line file passed at any size. A
+  97KB minified JSON became a single chunk and ollama returned 500 rather than truncating it.
+
+Measured the boundary: nomic-embed-text runs at a 2048-token context, failing at ~11,000 chars of
+  prose. The cap is set well under that for dense content, which tokenizes closer to 2 chars per
+  token.
+
+Every other chunker already caps its output, so this branch was the only one that could emit an
+  oversized chunk.
+
+### Features
+
+- **index**: Show overall target progress across a full run
+  ([`7595e0a`](https://github.com/datapointchris/indy/commit/7595e0ada64059b841553c5fcf3f98c7fde7c87d))
+
+Per-target tasks are removed as each finishes, so a bare 'indy index' had nothing on screen spanning
+  the run — the bar restarted silently at every target and a long run read as no progress at all.
+
+Add a task over the target list, so the display reads targets completed above files completed. Only
+  the no-argument branch needs it; --path and --repo index a single target where the file count is
+  the whole story.
+
+
 ## v0.3.1 (2026-08-07)
 
 ### Bug Fixes
