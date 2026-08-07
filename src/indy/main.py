@@ -146,12 +146,17 @@ def index(
 
     else:
         results = []
+        targets = all_index_targets()
         with progress:
-            for target in all_index_targets():
+            # Per-target tasks are removed as they finish, so without a task spanning the
+            # whole list the bar restarts silently and a long run reads as no progress.
+            overall = progress.add_task('all targets', total=len(targets), current_file='')
+            for target in targets:
                 task_id = progress.add_task(target.name, total=None, current_file='')
                 result = service.index_path(target.path, target.name, on_progress=make_progress_callback(task_id), exclude=target.exclude)
                 results.append(result)
                 progress.remove_task(task_id)
+                progress.advance(overall)
         for result in results:
             print_index_result(result)
         total_updated = sum(r['files_updated'] for r in results)
