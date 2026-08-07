@@ -427,6 +427,36 @@ def repos(
     console.print(table)
 
 
+@indy_app.command('config')
+def config(
+    as_json: bool = typer.Option(False, '--json', help='Output as JSON to stdout.'),
+):
+    """Show resolved settings and which layer supplied each one."""
+    described = service.describe_config()
+    if as_json:
+        print_json(described)
+        return
+
+    console.print(f'Config file: {described["config_file"]}{"" if described["config_file_exists"] else "  (not present)"}')
+
+    table = Table(show_header=True)
+    table.add_column('Setting')
+    table.add_column('Value')
+    table.add_column('From')
+    for setting in described['settings']:
+        missing = '' if setting['exists'] else '  (missing)'
+        table.add_row(setting['name'], f'{setting["value"]}{missing}', setting['source'])
+    console.print(table)
+
+    if described['extra_paths']:
+        extras = Table(show_header=True, title='extra_paths')
+        extras.add_column('Name')
+        extras.add_column('Path')
+        for entry in described['extra_paths']:
+            extras.add_row(entry['name'], f'{entry["path"]}{"" if entry["exists"] else "  (missing)"}')
+        console.print(extras)
+
+
 @indy_app.command('update')
 def update(
     check_only: bool = typer.Option(False, '--check', help='Report whether an update is available without installing it'),

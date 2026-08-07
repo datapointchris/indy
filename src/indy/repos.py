@@ -45,8 +45,8 @@ def load_exemplar_repos() -> list[IndexTarget]:
     """Third-party clones kept as code exemplars, from exemplar-repos.json.
 
     Indexed under a qualified `owner/name`. Bare names collide with the portfolio —
-    both `~/homelab` and khuedoan's clone are called `homelab` — which put one name
-    in both the owned and exemplar sets and merged their chunks under one label.
+    a clone commonly shares its name with a repo you own — which put one name in both
+    the owned and exemplar sets and merged their chunks under one label.
     """
     targets = []
     for repo in load_json_file(EXEMPLAR_REPOS_FILE).get('repos', []):

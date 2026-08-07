@@ -210,6 +210,17 @@ def finish_index_run(conn: sqlite3.Connection, run_id: int, data: dict) -> None:
     )
 
 
+def checkpoint(conn: sqlite3.Connection) -> None:
+    """Fold the WAL back into the database file and truncate it.
+
+    WAL mode leaves the newest commits in indy.db-wal, so anything that copies indy.db
+    on its own — a backup, or a file-sync peer replicating the index to a machine that
+    only ever searches — otherwise lands on the state before the last run. The sidecars
+    are recreated on the next write.
+    """
+    conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+
+
 # ── reporting ─────────────────────────────────────────────────────────────────
 
 

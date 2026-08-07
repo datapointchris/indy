@@ -1,32 +1,98 @@
+"""Constants, XDG base directories, and the user's config file.
+
+Every path indy reads or writes resolves the same way: an environment variable, then a
+key in config.toml, then a tool-owned default. No default names a directory outside
+indy's own XDG dirs — where a repo registry lives, or which loose directories are worth
+indexing, is a property of the machine and belongs in config.toml.
+"""
+
+from __future__ import annotations
+
 import json
 import os
+import tomllib
 from pathlib import Path
+from typing import Any
 
-INDY_DIR = Path(os.environ.get('INDY_DIR', Path.home() / 'dev' / 'indy'))
+
+def _xdg_base(env_var: str, *fallback: str) -> Path:
+    override = os.environ.get(env_var)
+    return Path(override).expanduser() if override else Path.home().joinpath(*fallback)
+
+
+CONFIG_HOME = _xdg_base('XDG_CONFIG_HOME', '.config')
+DATA_HOME = _xdg_base('XDG_DATA_HOME', '.local', 'share')
+
+CONFIG_DIR = CONFIG_HOME / 'indy'
+CONFIG_PATH = CONFIG_DIR / 'config.toml'
+
+
+def load_user_config(path: Path | None = None) -> dict[str, Any]:
+    """Parse config.toml, tolerating its absence — indy runs on defaults alone."""
+    path = CONFIG_PATH if path is None else path
+    if not path.exists():
+        return {}
+    return tomllib.loads(path.read_text())
+
+
+USER_CONFIG = load_user_config()
+
+
+def resolve_path(env_var: str, key: str, default: Path, config: dict[str, Any] | None = None) -> Path:
+    config = USER_CONFIG if config is None else config
+    value = os.environ.get(env_var) or config.get(key)
+    return Path(value).expanduser() if value else default
+
+
+def resolve_str(env_var: str, key: str, default: str, config: dict[str, Any] | None = None) -> str:
+    config = USER_CONFIG if config is None else config
+    return os.environ.get(env_var) or config.get(key) or default
+
+
+def setting_source(env_var: str, key: str, config: dict[str, Any] | None = None) -> str:
+    """Which of the three layers supplied a setting.
+
+    Travels with the value because the value alone does not explain itself: an index that
+    searches nothing is usually a config file that was never read, not a wrong path.
+    """
+    config = USER_CONFIG if config is None else config
+    if os.environ.get(env_var):
+        return f'${env_var}'
+    if config.get(key):
+        return str(CONFIG_PATH)
+    return 'default'
+
+
+def resolve_extra_paths(config: dict[str, Any] | None = None) -> list[dict[str, str]]:
+    """Non-repo roots to index, as [[extra_paths]] tables of name and path.
+
+    The env var carries the same shape as JSON, for a one-off run against a directory
+    that does not belong in the config file.
+    """
+    config = USER_CONFIG if config is None else config
+    raw = os.environ.get('INDY_EXTRA_PATHS')
+    if raw:
+        return json.loads(raw)
+    return list(config.get('extra_paths', []))
+
+
+# The index is derived state — rebuildable from its sources, and per-machine unless
+# something deliberately shares it. `data_dir` is how a setup that would rather index
+# once and search everywhere puts it in a synced tree instead.
+INDY_DIR = resolve_path('INDY_DIR', 'data_dir', DATA_HOME / 'indy')
 DB_PATH = INDY_DIR / 'indy.db'
 LOG_PATH = INDY_DIR / 'indy.log'
 
-REPOS_FILE = Path(os.environ.get('INDY_REPOS_FILE', Path.home() / 'dev' / 'repos.json'))
+# Registry locations default to indy-owned paths. Sharing one registry with other tools
+# is an arrangement between those tools, so it belongs in config.toml on the machines
+# that have such a file — never in the default, which every machine inherits.
+REPOS_FILE = resolve_path('INDY_REPOS_FILE', 'repos_file', CONFIG_DIR / 'repos.json')
+EXEMPLAR_REPOS_FILE = resolve_path('INDY_EXEMPLAR_REPOS_FILE', 'exemplar_repos_file', CONFIG_DIR / 'exemplar-repos.json')
 
-# Third-party clones kept as code exemplars. Separate from repos.json because the two
-# answer different questions and need different fields: an exemplar carries what it is
-# exemplary for and which subtrees to keep out of the index, neither of which belongs
-# on a repo we actually work in.
-EXEMPLAR_REPOS_FILE = Path(os.environ.get('INDY_EXEMPLAR_REPOS_FILE', Path.home() / 'dev' / 'exemplar-repos.json'))
+EXTRA_PATHS_RAW: list[dict[str, str]] = resolve_extra_paths()
 
-# Non-repo paths included in default 'indy index' runs (alongside repos.json).
-# The Syncthing-synced personal-knowledge dirs, which hold the reasoning behind decisions
-# that no repo records. ~/shart is deliberately absent: it holds recovery codes and key
-# material in .txt files, which DOC_EXTENSIONS would otherwise pull into the index.
-# Override with INDY_EXTRA_PATHS as JSON: '[{"name":"notes","path":"~/notes"}]'
-DEFAULT_EXTRA_PATHS = (
-    '[{"name": "obsession", "path": "~/obsession"}, {"name": "notes", "path": "~/notes"}, {"name": "dev", "path": "~/dev"}]'
-)
-EXTRA_PATHS_RAW: list[dict] = json.loads(os.environ.get('INDY_EXTRA_PATHS', DEFAULT_EXTRA_PATHS))
-
-# Ollama embedding config — httpx calls, no Python package needed
-OLLAMA_HOST = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
-OLLAMA_MODEL = os.environ.get('OLLAMA_MODEL', 'nomic-embed-text')
+OLLAMA_HOST = resolve_str('OLLAMA_HOST', 'ollama_host', 'http://localhost:11434')
+OLLAMA_MODEL = resolve_str('OLLAMA_MODEL', 'ollama_model', 'nomic-embed-text')
 EMBEDDING_DIM = 768  # nomic-embed-text output dimension
 
 # Files to skip regardless of extension

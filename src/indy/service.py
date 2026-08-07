@@ -16,19 +16,26 @@ from indy.chunker import detect_language
 from indy.chunker import extract_references
 from indy.config import CODE_EXTENSIONS
 from indy.config import CONFIG_EXTENSIONS
+from indy.config import CONFIG_PATH
 from indy.config import DOC_EXTENSIONS
+from indy.config import EXEMPLAR_REPOS_FILE
+from indy.config import EXTRA_PATHS_RAW
+from indy.config import INDY_DIR
 from indy.config import MAX_FILE_SIZE_BYTES
 from indy.config import OLLAMA_HOST
 from indy.config import OLLAMA_MODEL
+from indy.config import REPOS_FILE
 from indy.config import SKIP_DIRS
 from indy.config import SKIP_FILES
 from indy.config import compact_path
 from indy.config import expand_path
+from indy.config import setting_source
 from indy.repos import all_index_targets
 from indy.repos import get_exemplar_repo_names
 from indy.repos import get_owned_repo_names
 from indy.repos import get_target_by_name
 from indy.repos import is_excluded
+from indy.storage import checkpoint
 from indy.storage import delete_error_files
 from indy.storage import delete_file_chunks
 from indy.storage import delete_file_references
@@ -243,6 +250,7 @@ def index_path(
             },
         )
         conn.commit()
+        checkpoint(conn)
         conn.close()
 
     return {
@@ -377,3 +385,41 @@ def get_dependencies(symbol_name: str, repo: str | None = None, direction: str =
         return result
     finally:
         conn.close()
+
+
+def describe_setting(name: str, value: str, env_var: str, key: str) -> dict:
+    """One resolved setting: its value, the layer that supplied it, and whether it is there.
+
+    `exists` is only meaningful for a path, so a non-path setting reports True rather than
+    claiming a URL is missing.
+    """
+    is_path = value.startswith(('/', '~'))
+    return {
+        'name': name,
+        'value': value,
+        'source': setting_source(env_var, key),
+        'exists': Path(value).expanduser().exists() if is_path else True,
+    }
+
+
+def describe_config() -> dict:
+    """Every resolved setting, the layer it came from, and whether it is actually there.
+
+    Reports paths rather than validating them: a registry indy has not been pointed at
+    yet is the normal state of a fresh install, not an error.
+    """
+    settings = [
+        describe_setting('data_dir', str(INDY_DIR), 'INDY_DIR', 'data_dir'),
+        describe_setting('repos_file', str(REPOS_FILE), 'INDY_REPOS_FILE', 'repos_file'),
+        describe_setting('exemplar_repos_file', str(EXEMPLAR_REPOS_FILE), 'INDY_EXEMPLAR_REPOS_FILE', 'exemplar_repos_file'),
+        describe_setting('ollama_host', OLLAMA_HOST, 'OLLAMA_HOST', 'ollama_host'),
+        describe_setting('ollama_model', OLLAMA_MODEL, 'OLLAMA_MODEL', 'ollama_model'),
+    ]
+    return {
+        'config_file': str(CONFIG_PATH),
+        'config_file_exists': CONFIG_PATH.exists(),
+        'settings': settings,
+        'extra_paths': [
+            {'name': entry['name'], 'path': entry['path'], 'exists': Path(entry['path']).expanduser().exists()} for entry in EXTRA_PATHS_RAW
+        ],
+    }

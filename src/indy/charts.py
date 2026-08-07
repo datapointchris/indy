@@ -1,7 +1,7 @@
 """Terminal chart primitives using Rich Text and Unicode block characters.
 
-Adapted from ichrisbirch/stats/cli/charts.py — same block-character approach
-for sub-character precision rendering.
+Eighth-block characters give sub-character precision, so a bar's length carries
+roughly three extra bits over one drawn in whole cells.
 """
 
 from __future__ import annotations

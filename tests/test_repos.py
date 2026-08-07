@@ -10,14 +10,14 @@ from indy.repos import is_excluded
 def write_registries(tmp_path, monkeypatch, portfolio, exemplars):
     repos_file = tmp_path / 'repos.json'
     exemplar_file = tmp_path / 'exemplar-repos.json'
-    repos_file.write_text(json.dumps({'owner': 'datapointchris', 'repos': portfolio}))
+    repos_file.write_text(json.dumps({'owner': 'test-owner', 'repos': portfolio}))
     exemplar_file.write_text(json.dumps({'repos': exemplars}))
     monkeypatch.setattr(repos, 'REPOS_FILE', repos_file)
     monkeypatch.setattr(repos, 'EXEMPLAR_REPOS_FILE', exemplar_file)
 
 
 def test_same_name_in_both_registries_stays_distinct(tmp_path, monkeypatch):
-    """`~/homelab` and khuedoan's clone are both called `homelab`. Indexing them under
+    """A repo you own and an exemplar clone can share a bare name. Indexing them under
     one label merged their chunks and put the name in both the owned and exemplar sets."""
     mine = tmp_path / 'homelab'
     theirs = tmp_path / 'refs' / 'homelab'
@@ -28,18 +28,18 @@ def test_same_name_in_both_registries_stays_distinct(tmp_path, monkeypatch):
         tmp_path,
         monkeypatch,
         portfolio=[{'name': 'homelab', 'path': str(mine), 'status': 'active'}],
-        exemplars=[{'name': 'homelab', 'path': str(theirs), 'owner': 'khuedoan'}],
+        exemplars=[{'name': 'homelab', 'path': str(theirs), 'owner': 'upstream'}],
     )
 
     owned = repos.get_owned_repo_names()
     exemplar = repos.get_exemplar_repo_names()
 
     assert owned == {'homelab'}
-    assert exemplar == {'khuedoan/homelab'}
+    assert exemplar == {'upstream/homelab'}
     assert not (owned & exemplar), 'a name must never land in both sets'
 
     assert repos.get_target_by_name('homelab').path == mine
-    assert repos.get_target_by_name('khuedoan/homelab').path == theirs
+    assert repos.get_target_by_name('upstream/homelab').path == theirs
 
 
 def test_dormant_repos_are_not_indexed(tmp_path, monkeypatch):
@@ -60,12 +60,12 @@ def test_dormant_repos_are_not_indexed(tmp_path, monkeypatch):
 
 
 def test_missing_exemplar_file_is_not_fatal(tmp_path, monkeypatch):
-    repo = tmp_path / 'forge'
+    repo = tmp_path / 'example-repo'
     repo.mkdir()
-    write_registries(tmp_path, monkeypatch, portfolio=[{'name': 'forge', 'path': str(repo), 'status': 'active'}], exemplars=[])
+    write_registries(tmp_path, monkeypatch, portfolio=[{'name': 'example-repo', 'path': str(repo), 'status': 'active'}], exemplars=[])
     monkeypatch.setattr(repos, 'EXEMPLAR_REPOS_FILE', tmp_path / 'does-not-exist.json')
     assert repos.get_exemplar_repo_names() == set()
-    assert repos.get_owned_repo_names() == {'forge'}
+    assert repos.get_owned_repo_names() == {'example-repo'}
 
 
 def test_exemplar_carries_its_exclude_patterns(tmp_path, monkeypatch):
@@ -102,4 +102,4 @@ def test_is_excluded(path, patterns, expected):
 
 
 def test_index_target_defaults_to_no_excludes():
-    assert IndexTarget(name='forge', path='/tmp/forge', kind=repos.OWNED).exclude == ()
+    assert IndexTarget(name='example-repo', path='/tmp/example-repo', kind=repos.OWNED).exclude == ()
