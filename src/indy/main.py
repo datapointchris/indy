@@ -11,6 +11,7 @@ from pyselfupdate import Config
 from pyselfupdate import notify
 from pyselfupdate.typercmd import run_update
 from rich.console import Console
+from rich.markup import escape
 from rich.progress import BarColumn
 from rich.progress import Progress
 from rich.progress import SpinnerColumn
@@ -151,7 +152,7 @@ def index(
                     total=update.total,
                     completed=update.scanned,
                     counts=f'{format_counts(update.scanned, update.total)} scanned',
-                    current_file=update.current_file,
+                    current_file=format_current_file(update.current_file),
                 )
                 return
             progress.update(
@@ -159,7 +160,7 @@ def index(
                 total=update.to_update,
                 completed=update.updated,
                 counts=f'{format_counts(update.updated, update.to_update)} updated · {update.total} files',
-                current_file=update.current_file,
+                current_file=format_current_file(update.current_file),
             )
 
         return on_progress
@@ -228,14 +229,24 @@ def announce_stage(stage: str) -> None:
     """Narrate the two points where indexing stops to move the whole database.
 
     Both are silent multi-second pauses on an index this size, and an unexplained pause in a
-    long-running command reads as a hang.
+    long-running command reads as a hang. What they say is what the run is doing to the
+    index, never how it is done — a working copy and a rename are indy's business.
     """
-    if stage == 'copying':
+    if stage == 'snapshot':
         size = service.index_size_bytes()
         if size:
-            console.print(f'Copying the index ({format_size(size)}) to a working copy — indy.db is never written in place.')
-    elif stage == 'swapping':
-        console.print('Swapping the finished index into place.')
+            console.print(f'Snapshotting the index ({format_size(size)})')
+    elif stage == 'save':
+        console.print('Saving the updated index')
+
+
+def format_current_file(name: str) -> str:
+    """The file being worked on, fenced off from the counts that precede it.
+
+    Escaped because the corpus contains filenames with square brackets — a route file called
+    `[slug].md` is markup to rich, and it would swallow the name it is meant to show.
+    """
+    return f'│ [green]{escape(name)}[/green]' if name else ''
 
 
 def suggest_target_names(name: str) -> list[str]:

@@ -198,12 +198,14 @@ def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[Ind
     A failure to open or commit is different: nothing partial is left behind, and the index
     stays exactly as it was, having never been opened for writing.
 
-    on_stage is called with 'copying' before the seed copy and 'swapping' before the rename.
-    Both block for as long as a database of this size takes to move, and a CLI that says
-    nothing during them looks hung.
+    on_stage is called with 'snapshot' before the run takes its copy and 'save' before that
+    copy becomes the index. Both block for as long as a database of this size takes to move,
+    and a CLI that says nothing during them looks hung. They are named for what the run is
+    doing rather than for the copy and rename that implement it, since the caller announcing
+    them is writing for someone watching an index, not reading this file.
     """
     if on_stage:
-        on_stage('copying')
+        on_stage('snapshot')
     conn = open_working_db()
     try:
         yield IndexSession(conn)
@@ -214,7 +216,7 @@ def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[Ind
         discard_working_db(conn)
         raise
     if on_stage:
-        on_stage('swapping')
+        on_stage('save')
     commit_working_db(conn)
 
 
