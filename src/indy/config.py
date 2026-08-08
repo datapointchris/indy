@@ -83,6 +83,11 @@ INDY_DIR = resolve_path('INDY_DIR', 'data_dir', DATA_HOME / 'indy')
 DB_PATH = INDY_DIR / 'indy.db'
 LOG_PATH = INDY_DIR / 'indy.log'
 
+# What an index run builds into before renaming the result over DB_PATH. Beside the index
+# rather than in a temp directory because os.replace is only atomic within one filesystem,
+# and that atomicity is the point — see storage.open_working_db().
+WORKING_DB_PATH = INDY_DIR / 'indy.db.building'
+
 # Registry locations default to indy-owned paths. Sharing one registry with other tools
 # is an arrangement between those tools, so it belongs in config.toml on the machines
 # that have such a file — never in the default, which every machine inherits.

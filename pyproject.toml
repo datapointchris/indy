@@ -22,7 +22,7 @@ dependencies = [
 Repository = "https://github.com/datapointchris/indy"
 
 [project.scripts]
-indy = "indy.main:indy_app"
+indy = "indy.main:main"
 
 [dependency-groups]
 dev = [

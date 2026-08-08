@@ -1,22 +1,116 @@
 """Pure SQLite + sqlite-vec access layer. No business logic lives here."""
 
+import os
 import sqlite3
+from pathlib import Path
 
 import sqlite_vec
 
 from indy.config import DB_PATH
 from indy.config import EMBEDDING_DIM
+from indy.config import WORKING_DB_PATH
 
 
-def get_db() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute('PRAGMA journal_mode=WAL')
+class IndexNotFoundError(Exception):
+    """There is no database at DB_PATH to read."""
+
+
+def _load_vec_extension(conn: sqlite3.Connection) -> None:
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
+
+
+def index_size_bytes() -> int:
+    """Size of the current index, or 0 if this machine has none yet."""
+    return DB_PATH.stat().st_size if DB_PATH.exists() else 0
+
+
+def open_working_db() -> sqlite3.Connection:
+    """Start a working copy of the index and open it for writing.
+
+    indy.db itself is never written. It is seeded into a copy here and the finished copy is
+    renamed over it by commit_working_db(), so the file on disk is replaced whole and is
+    never open for writing — the two properties that make it safe to replicate, and the two
+    it lacked when a syncer corrupted the index across the fleet.
+
+    VACUUM INTO rather than a file copy: it reads inside a transaction, so the seed is one
+    instant of the database and needs no -wal alongside it to be complete. A crashed run now
+    costs only the working copy, since the index it was built from was never touched.
+    """
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    discard_working_files()
+
+    if DB_PATH.exists():
+        source = sqlite3.connect(f'file:{DB_PATH}?mode=ro', uri=True)
+        try:
+            source.execute('VACUUM INTO ?', (str(WORKING_DB_PATH),))
+        finally:
+            source.close()
+
+    conn = sqlite3.connect(WORKING_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA journal_mode=WAL')
+    _load_vec_extension(conn)
     init_schema(conn)
+    return conn
+
+
+def commit_working_db(conn: sqlite3.Connection) -> None:
+    """Finish the working copy and swap it into place as the index.
+
+    Delete journal mode before the rename is what leaves the result complete on its own: the
+    WAL is folded back in and the sidecars go, so nothing is left beside indy.db that a copy
+    of it could be missing.
+
+    The outgoing database's sidecars are removed *before* the rename, not after. A -wal
+    belongs to one specific database, and SQLite will adopt one it finds beside a file as
+    that file's live tail: a read then answers out of the old database and never sees the new
+    one, with no error anywhere. Removing them first means a crash mid-swap can only leave
+    the previous index missing its last commits — stale, which a re-index fixes, rather than
+    silently answering from a database that no longer exists.
+    """
+    conn.commit()
+    conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+    conn.execute('PRAGMA journal_mode=DELETE')
+    conn.close()
+    discard_sidecars(DB_PATH)
+    os.replace(WORKING_DB_PATH, DB_PATH)
+
+
+def discard_working_db(conn: sqlite3.Connection) -> None:
+    """Abandon the working copy, leaving the index as it was before the run."""
+    conn.close()
+    discard_working_files()
+
+
+def discard_working_files() -> None:
+    """Remove the working copy, including any a killed run left behind."""
+    WORKING_DB_PATH.unlink(missing_ok=True)
+    discard_sidecars(WORKING_DB_PATH)
+
+
+def discard_sidecars(db_path: Path) -> None:
+    """Remove a database's -wal and -shm, which describe only that database."""
+    for suffix in ('-wal', '-shm'):
+        db_path.with_name(db_path.name + suffix).unlink(missing_ok=True)
+
+
+def get_read_db() -> sqlite3.Connection:
+    """Open the index read-only, at the same path a write would use.
+
+    Read-only is a correctness requirement rather than an optimization. A normal connection
+    to a WAL database writes to the main file when the last connection closes — SQLite runs
+    a passive checkpoint — so on a machine that only ever searches, `indy search` still
+    modified the file, and every search made that machine's copy diverge from the one a
+    syncer had sent it. Against a finished index, which is in delete journal mode, a
+    read-only connection writes nothing and creates no sidecar at all.
+    """
+    if not DB_PATH.exists():
+        raise IndexNotFoundError(f'No index at {DB_PATH}. Run `indy index`, or wait for a peer to deliver one.')
+    conn = sqlite3.connect(f'file:{DB_PATH}?mode=ro', uri=True)
+    conn.row_factory = sqlite3.Row
+    _load_vec_extension(conn)
     return conn
 
 
@@ -208,17 +302,6 @@ def finish_index_run(conn: sqlite3.Connection, run_id: int, data: dict) -> None:
         """,
         {**data, 'id': run_id},
     )
-
-
-def checkpoint(conn: sqlite3.Connection) -> None:
-    """Fold the WAL back into the database file and truncate it.
-
-    WAL mode leaves the newest commits in indy.db-wal, so anything that copies indy.db
-    on its own — a backup, or a file-sync peer replicating the index to a machine that
-    only ever searches — otherwise lands on the state before the last run. The sidecars
-    are recreated on the next write.
-    """
-    conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
 
 
 # ── reporting ─────────────────────────────────────────────────────────────────

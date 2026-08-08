@@ -45,9 +45,45 @@ symbol_reference  Call graph: one row per reference (import/call/inherit) extrac
 
 Override the data dir with `data_dir` in config.toml or the `INDY_DIR` env var.
 
-The WAL is checkpointed (`PRAGMA wal_checkpoint(TRUNCATE)`) at the end of every index
-run, so `indy.db` is a complete copy on its own. Without that, anything replicating the
-file without its `-wal` sidecar silently lands on the state before the last run.
+There is exactly one database, at `DB_PATH`, on every machine — whether this machine built
+it or a syncer delivered it. Nothing else is read, and nothing else needs reasoning about.
+
+## The index is replaced, never written
+
+Two invariants make `indy.db` safe for a file syncer to replicate, and every write path
+exists to preserve them.
+
+**Nothing ever opens `indy.db` for writing.** A run seeds `indy.db.building` beside it with
+`VACUUM INTO`, indexes into that, and renames the finished copy over `indy.db` —
+`service.index_session`, over `storage.open_working_db` and `commit_working_db`. One session
+spans a whole invocation, not one per target: the swap costs a copy of the database, so per
+target would be seventy copies. `clear_errors` goes through the same session; copying the
+whole database to delete a few rows is disproportionate, and it is the price of there being
+no second write path.
+
+**Searching cannot modify it.** Reads go through `get_read_db`, which opens `mode=ro`. A
+normal connection to a WAL database writes to the main file when the last connection closes,
+because SQLite runs a passive checkpoint — so a plain `indy search` used to modify the file,
+and on the machines whose copy a syncer maintained, every search made that copy diverge from
+the one it had been sent.
+
+Together these give the syncer a file that is never half-written and only ever changes whole.
+A finished index is in delete journal mode, so it is complete on its own with no sidecar to
+lose, and a read leaves it byte-identical.
+
+**Why not write it incrementally.** WAL mode does not hold `indy.db` still: autocheckpoints
+rewrite pages throughout a run, so a syncer hashing a multi-gigabyte file over minutes ships
+blocks read at different moments and the peer assembles a database that never existed at any
+instant. Nothing reports it — SQLite validates nothing on open and only errors on a page it
+actually reads, so the damage accumulates unseen. Syncing `indy.db` with only the `-wal` and
+`-shm` sidecars excluded ran for months, corrupted the index on every machine, and first said
+so twelve days later as `database disk image is malformed`. By then `index_run` was returning
+rows of chunk text and no copy on any machine was salvageable.
+
+The costs are deliberate: a run copies the whole database up front, which is noise against a
+multi-hour run and disproportionate for one small repo, and results appear all at once at the
+end rather than incrementally. In exchange, a crashed run cannot damage the index it was
+built from.
 
 ## Embeddings
 
@@ -103,6 +139,10 @@ ships 14 doc translations, so `docs/*/**` then `!docs/en/**` keeps the 154 Engli
   reference extraction for those languages is deferred. Python AST covers the primary use case.
 - **target_module captured for attribute calls** — `storage.get_db()` stores target_module="storage",
   helping disambiguate when multiple functions share a name across modules.
+- **One database, made safe to sync, rather than a second one published beside it** — a
+  publish directory would mean two databases and a rule about which answers a query. Building
+  into a working copy and renaming gives the syncer the same guarantee with one file at one
+  path on every machine.
 - **Ownership resolved at service layer, not storage** — service.py resolves `--owned`/`--reference`
   into a set of repo names and passes it to storage as a generic filter. Storage knows nothing
   about ownership.

@@ -1,5 +1,6 @@
 import importlib.metadata
 import json
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -21,8 +22,10 @@ from rich.table import Table
 import indy.service as service
 from indy.charts import horizontal_bars
 from indy.charts import streamline
+from indy.repos import IndexTarget
 from indy.repos import all_index_targets
 from indy.repos import get_target_by_name
+from indy.storage import IndexNotFoundError
 
 indy_app = typer.Typer(name='indy', no_args_is_help=True, help='Semantic search index for local codebases, docs, and notes.')
 console = Console(highlight=False)
@@ -129,42 +132,63 @@ def index(
         if not root.exists():
             console.print(f'[red]Path not found: {root}[/red]')
             raise typer.Exit(1)
-        repo_name = root.name
-        with progress:
-            task_id = progress.add_task(repo_name, total=None, current_file='')
-            result = service.index_path(root, repo_name, on_progress=make_progress_callback(task_id))
-        print_index_result(result)
-
+        targets = [IndexTarget(name=root.name, path=root, kind='path')]
     elif repo:
-        if get_target_by_name(repo) is None:
+        target = get_target_by_name(repo)
+        if target is None:
             console.print(f'[red]Repo {repo!r} not found. Exemplar clones are named owner/repo.[/red]')
             raise typer.Exit(1)
-        with progress:
-            task_id = progress.add_task(repo, total=None, current_file='')
-            result = service.index_repo(repo, on_progress=make_progress_callback(task_id))
-        print_index_result(result)
-
+        targets = [target]
     else:
-        results = []
         targets = all_index_targets()
+
+    results = []
+    # The session wraps the progress display rather than sitting inside it: both the copy it
+    # opens with and the swap it closes with are silent multi-second pauses, and announcing
+    # them from under a live progress bar puts them out of order with the work they bracket.
+    with service.index_session(on_stage=announce_stage) as session:
         with progress:
             # Per-target tasks are removed as they finish, so without a task spanning the
             # whole list the bar restarts silently and a long run reads as no progress.
-            overall = progress.add_task('all targets', total=len(targets), current_file='')
+            overall = progress.add_task('all targets', total=len(targets), current_file='') if len(targets) > 1 else None
             for target in targets:
                 task_id = progress.add_task(target.name, total=None, current_file='')
-                result = service.index_path(target.path, target.name, on_progress=make_progress_callback(task_id), exclude=target.exclude)
+                result = session.index_path(target.path, target.name, on_progress=make_progress_callback(task_id), exclude=target.exclude)
                 results.append(result)
                 progress.remove_task(task_id)
-                progress.advance(overall)
+                if overall is not None:
+                    progress.advance(overall)
+
         for result in results:
             print_index_result(result)
-        total_updated = sum(r['files_updated'] for r in results)
-        total_chunks = sum(r['chunks_added'] for r in results)
-        console.print(f'\n[bold]Done.[/bold] {len(results)} repos, {total_updated} files updated, {total_chunks} chunks added.')
+        if len(results) > 1:
+            total_updated = sum(r['files_updated'] for r in results)
+            total_chunks = sum(r['chunks_added'] for r in results)
+            console.print(f'\n[bold]Done.[/bold] {len(results)} repos, {total_updated} files updated, {total_chunks} chunks added.')
 
     elapsed = time.perf_counter() - t0
     console.print(f'Completed in {format_elapsed(elapsed)}')
+
+
+def announce_stage(stage: str) -> None:
+    """Narrate the two points where indexing stops to move the whole database.
+
+    Both are silent multi-second pauses on an index this size, and an unexplained pause in a
+    long-running command reads as a hang.
+    """
+    if stage == 'copying':
+        size = service.index_size_bytes()
+        if size:
+            console.print(f'Copying the index ({format_size(size)}) to a working copy — indy.db is never written in place.')
+    elif stage == 'swapping':
+        console.print('Swapping the finished index into place.')
+
+
+def format_size(num_bytes: int) -> str:
+    gigabytes = num_bytes / 1_000_000_000
+    if gigabytes >= 1:
+        return f'{gigabytes:.1f} GB'
+    return f'{num_bytes / 1_000_000:.0f} MB'
 
 
 def format_elapsed(seconds: float) -> str:
@@ -212,7 +236,7 @@ def errors():
 @indy_app.command('errors-clear')
 def errors_clear():
     """Remove all error records from the index, so they are re-attempted on next index run."""
-    cleared = service.clear_errors()
+    cleared = service.clear_errors(on_stage=announce_stage)
     if cleared:
         console.print(f'Cleared {cleared} error record{"s" if cleared != 1 else ""}.')
     else:
@@ -461,5 +485,19 @@ def get_installed_commit_hash() -> str | None:
     return None
 
 
+def main() -> None:
+    """Console entry point.
+
+    Wraps the app so a machine with no index yet — the ordinary state of one that searches a
+    snapshot a peer has not delivered — gets the sentence telling it what to do, rather than
+    a traceback out of the connection layer.
+    """
+    try:
+        indy_app()
+    except IndexNotFoundError as exc:
+        console.print(f'[red]{exc}[/red]')
+        sys.exit(1)
+
+
 if __name__ == '__main__':
-    indy_app()
+    main()

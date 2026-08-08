@@ -2,8 +2,11 @@
 The CLI is a thin wrapper around these functions."""
 
 import hashlib
+import sqlite3
 import subprocess
 from collections.abc import Callable
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import UTC
 from datetime import datetime
@@ -35,24 +38,27 @@ from indy.repos import get_exemplar_repo_names
 from indy.repos import get_owned_repo_names
 from indy.repos import get_target_by_name
 from indy.repos import is_excluded
-from indy.storage import checkpoint
+from indy.storage import commit_working_db
 from indy.storage import delete_error_files
 from indy.storage import delete_file_chunks
 from indy.storage import delete_file_references
+from indy.storage import discard_working_db
 from indy.storage import finish_index_run
 from indy.storage import get_chunks_by_symbol
-from indy.storage import get_db
 from indy.storage import get_error_files
 from indy.storage import get_index_stats
 from indy.storage import get_indexed_file
 from indy.storage import get_indexed_repos
+from indy.storage import get_read_db
 from indy.storage import get_recent_runs
 from indy.storage import get_repo_scan_history
 from indy.storage import get_symbol_callees
 from indy.storage import get_symbol_callers
+from indy.storage import index_size_bytes as index_size_bytes
 from indy.storage import insert_chunk
 from indy.storage import insert_chunk_embedding
 from indy.storage import insert_references
+from indy.storage import open_working_db
 from indy.storage import search_chunks
 from indy.storage import start_index_run
 from indy.storage import upsert_indexed_file
@@ -133,7 +139,57 @@ def collect_indexable_files(root: Path, exclude: tuple[str, ...] = ()) -> list[P
     return files
 
 
-def index_path(
+class IndexSession:
+    """One invocation of indexing, however many targets it covers.
+
+    Everything written during the session goes to a working copy, and the whole of it
+    becomes the index in a single rename when the session closes. Held open across every
+    target rather than per target because the swap costs a copy of the database: doing it
+    once a run is the difference between one copy and seventy.
+    """
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def index_path(
+        self,
+        root: Path,
+        repo_name: str,
+        on_progress: Callable[[int, int, str], None] | None = None,
+        exclude: tuple[str, ...] = (),
+    ) -> dict:
+        return index_into(self._conn, root, repo_name, on_progress=on_progress, exclude=exclude)
+
+    def clear_errors(self) -> int:
+        return delete_error_files(self._conn)
+
+
+@contextmanager
+def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[IndexSession]:
+    """Open a working copy, yield a session that writes to it, and swap it in on success.
+
+    A run that raises leaves the index exactly as it was — the working copy is thrown away
+    and indy.db was never opened for writing in the first place.
+
+    on_stage is called with 'copying' before the seed copy and 'swapping' before the rename.
+    Both block for as long as a database of this size takes to move, and a CLI that says
+    nothing during them looks hung.
+    """
+    if on_stage:
+        on_stage('copying')
+    conn = open_working_db()
+    try:
+        yield IndexSession(conn)
+    except BaseException:
+        discard_working_db(conn)
+        raise
+    if on_stage:
+        on_stage('swapping')
+    commit_working_db(conn)
+
+
+def index_into(
+    conn: sqlite3.Connection,
     root: Path,
     repo_name: str,
     on_progress: Callable[[int, int, str], None] | None = None,
@@ -145,7 +201,6 @@ def index_path(
     """
     indexable_files = collect_indexable_files(root, exclude)
     total_files = len(indexable_files)
-    conn = get_db()
     now = datetime.now(UTC).isoformat()
     run_id = start_index_run(conn, repo_name, now)
 
@@ -250,8 +305,6 @@ def index_path(
             },
         )
         conn.commit()
-        checkpoint(conn)
-        conn.close()
 
     return {
         'repo': repo_name,
@@ -262,16 +315,38 @@ def index_path(
     }
 
 
-def index_repo(repo_name: str, on_progress: Callable[[int, int, str], None] | None = None) -> dict:
+def index_path(
+    root: Path,
+    repo_name: str,
+    on_progress: Callable[[int, int, str], None] | None = None,
+    exclude: tuple[str, ...] = (),
+    on_stage: Callable[[str], None] | None = None,
+) -> dict:
+    """Index one path as a session of its own."""
+    with index_session(on_stage=on_stage) as session:
+        return session.index_path(root, repo_name, on_progress=on_progress, exclude=exclude)
+
+
+def index_repo(
+    repo_name: str,
+    on_progress: Callable[[int, int, str], None] | None = None,
+    on_stage: Callable[[str], None] | None = None,
+) -> dict:
     target = get_target_by_name(repo_name)
     if target is None:
         raise ValueError(f'Repo {repo_name!r} not found in active repos')
-    return index_path(target.path, target.name, on_progress=on_progress, exclude=target.exclude)
+    return index_path(target.path, target.name, on_progress=on_progress, exclude=target.exclude, on_stage=on_stage)
 
 
-def index_all(on_progress: Callable[[int, int, str], None] | None = None) -> list[dict]:
+def index_all(
+    on_progress: Callable[[int, int, str], None] | None = None,
+    on_stage: Callable[[str], None] | None = None,
+) -> list[dict]:
     """Index every target: portfolio repos, exemplar clones, and configured extra paths."""
-    return [index_path(target.path, target.name, on_progress=on_progress, exclude=target.exclude) for target in all_index_targets()]
+    with index_session(on_stage=on_stage) as session:
+        return [
+            session.index_path(target.path, target.name, on_progress=on_progress, exclude=target.exclude) for target in all_index_targets()
+        ]
 
 
 def expand_result_paths(results: list[dict], key: str = 'file_path') -> list[dict]:
@@ -300,7 +375,7 @@ def search(
 ) -> list[dict]:
     repos = resolve_ownership_filter(owned)
     embedding = embed_text(query)
-    conn = get_db()
+    conn = get_read_db()
     try:
         return expand_result_paths(search_chunks(conn, embedding, repo=repo, language=language, limit=limit, repos=repos))
     finally:
@@ -308,7 +383,7 @@ def search(
 
 
 def search_symbol(name: str, repo: str | None = None) -> list[dict]:
-    conn = get_db()
+    conn = get_read_db()
     try:
         return expand_result_paths(get_chunks_by_symbol(conn, name, repo=repo))
     finally:
@@ -316,7 +391,7 @@ def search_symbol(name: str, repo: str | None = None) -> list[dict]:
 
 
 def get_status() -> dict:
-    conn = get_db()
+    conn = get_read_db()
     try:
         stats = get_index_stats(conn)
         stats['recent_runs'] = get_recent_runs(conn, limit=5)
@@ -330,7 +405,7 @@ def get_status() -> dict:
 
 
 def list_repos() -> list[dict]:
-    conn = get_db()
+    conn = get_read_db()
     try:
         return get_indexed_repos(conn)
     finally:
@@ -338,7 +413,7 @@ def list_repos() -> list[dict]:
 
 
 def repo_scan_history(repo: str, limit: int = 20) -> list[dict]:
-    conn = get_db()
+    conn = get_read_db()
     try:
         return get_repo_scan_history(conn, repo, limit=limit)
     finally:
@@ -359,13 +434,16 @@ def refresh(repo: str | None = None) -> dict:
     }
 
 
-def clear_errors() -> int:
-    """Remove all error records from indexed_file. Returns count cleared."""
-    conn = get_db()
-    try:
-        return delete_error_files(conn)
-    finally:
-        conn.close()
+def clear_errors(on_stage: Callable[[str], None] | None = None) -> int:
+    """Remove all error records from indexed_file. Returns count cleared.
+
+    Goes through a session like any other write. Copying the whole database to delete a
+    handful of rows is disproportionate work for the size of the change, and it is the
+    price of the invariant that makes the index safe to replicate: indy.db is only ever
+    replaced, so there is no write path that leaves it open and half-modified.
+    """
+    with index_session(on_stage=on_stage) as session:
+        return session.clear_errors()
 
 
 def get_dependencies(symbol_name: str, repo: str | None = None, direction: str = 'both') -> dict:
@@ -375,7 +453,7 @@ def get_dependencies(symbol_name: str, repo: str | None = None, direction: str =
     direction='callees' → what symbol_name calls
     direction='both'    → both
     """
-    conn = get_db()
+    conn = get_read_db()
     try:
         result: dict = {}
         if direction in ('callers', 'both'):
