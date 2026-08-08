@@ -1,3 +1,4 @@
+import difflib
 import importlib.metadata
 import json
 import sys
@@ -98,12 +99,30 @@ def status(
         console.print(f'[bold red]Error files: {error_count}[/bold red]  (run [bold]indy errors[/bold] for details)')
 
 
+def complete_target_name(incomplete: str) -> list[tuple[str, str]]:
+    """Shell completion for the repo argument: every name `index` will accept.
+
+    Matches the trailing segment as well as the whole name, because exemplar clones are
+    qualified `owner/name` — typing `fastapi` should offer `tiangolo/fastapi` rather than
+    nothing, since the owner is the part nobody remembers.
+    """
+    return [
+        (target.name, target.kind)
+        for target in all_index_targets()
+        if target.name.startswith(incomplete) or target.name.rpartition('/')[2].startswith(incomplete)
+    ]
+
+
 @indy_app.command('index')
 def index(
-    repo: str = typer.Argument(None, help='Repo name from repos.json. Omit to index all.'),
-    path: str = typer.Option(None, '--path', '-p', help='Arbitrary path to index.'),
+    repo: str = typer.Argument(None, help='Repo to index. Omit to index everything.', autocompletion=complete_target_name),
+    path: str = typer.Option(None, '--path', '-p', help='Index a directory that is not a registered repo.'),
 ):
-    """Index a repo or path into the semantic search store."""
+    """Index a repo or path into the semantic search store.
+
+    Exemplar clones are named owner/name; everything else is a bare name. Press TAB to
+    complete either.
+    """
     if repo and path:
         console.print('[red]Cannot specify both repo name and --path.[/red]')
         raise typer.Exit(1)
@@ -154,8 +173,10 @@ def index(
     elif repo:
         target = get_target_by_name(repo)
         if target is None:
-            console.print(f'[red]Repo {repo!r} not found. Exemplar clones are named owner/repo.[/red]')
-            raise typer.Exit(1)
+            console.print(f'[red]No repo named {repo!r}.[/red]')
+            for suggestion in suggest_target_names(repo):
+                console.print(f'  did you mean [bold]{suggestion}[/bold]?')
+            raise typer.Exit(2)
         targets = [target]
     else:
         targets = all_index_targets()
@@ -208,6 +229,17 @@ def announce_stage(stage: str) -> None:
             console.print(f'Copying the index ({format_size(size)}) to a working copy — indy.db is never written in place.')
     elif stage == 'swapping':
         console.print('Swapping the finished index into place.')
+
+
+def suggest_target_names(name: str) -> list[str]:
+    """Names close enough to what was typed to be worth naming in the error.
+
+    A bare name that an exemplar carries qualified is the common miss and is not a typo, so
+    it is offered ahead of any fuzzy match: `fastapi` should point at `tiangolo/fastapi`.
+    """
+    names = [target.name for target in all_index_targets()]
+    qualified = [candidate for candidate in names if candidate.rpartition('/')[2] == name]
+    return qualified or difflib.get_close_matches(name, names, n=3, cutoff=0.6)
 
 
 def format_counts(done: int, total: int) -> str:
