@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v0.7.0 (2026-08-08)
+
+### Features
+
+- **cli**: Complete repo names and suggest near misses
+  ([`2495534`](https://github.com/datapointchris/indy/commit/24955344ba53004644fdf452bb99d4b37a83a01a))
+
+`indy index <TAB>` now offers every name the command accepts, labelled owned or exemplar. Exemplar
+  clones are qualified owner/name, so the trailing segment completes too — `fastapi` offers
+  `fastapi/fastapi`, since the owner is the part nobody remembers.
+
+An unrecognised name says which names are close instead of only that this one is wrong, and exits 2
+  rather than 1: it is a usage error, which cli-design.md gives its own code.
+
+The argument help named repos.json, which is the plumbing leak that standard warns about — it
+  describes where the implementer reads names from, and is wrong besides, since exemplar names come
+  from the other registry.
+
+
 ## v0.6.0 (2026-08-08)
 
 ### Features
