@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v0.5.0 (2026-08-08)
+
+### Features
+
+- **index**: Show how many files a target actually re-embedded
+  ([`4ecd5d8`](https://github.com/datapointchris/indy/commit/4ecd5d8502282d86ebdd50cd884b6e4c0da59e85))
+
+The progress line counted scanned against total, which on a re-index races to the end while almost
+  nothing happens — every file whose content hash is unchanged is skipped without being embedded.
+  The number that says whether a run is doing work was only ever visible in the summary printed
+  afterwards.
+
+Targets now read `40/220 12 updated`, and the counter is padded so it stops jittering as it gains a
+  digit. on_progress takes an IndexProgress record rather than three positional arguments, and fires
+  once more when a target finishes so its closing tick reports the last file rather than stopping
+  one short of it.
+
+
 ## v0.4.1 (2026-08-08)
 
 ### Bug Fixes
