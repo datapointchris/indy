@@ -8,6 +8,7 @@ from collections.abc import Callable
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
+from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
 from pathlib import Path
@@ -64,6 +65,24 @@ from indy.storage import start_index_run
 from indy.storage import upsert_indexed_file
 
 _INDEXABLE_EXTENSIONS = CODE_EXTENSIONS | DOC_EXTENSIONS | CONFIG_EXTENSIONS
+
+
+@dataclass(frozen=True)
+class IndexProgress:
+    """One tick of an in-flight target: how far through it is, and how much was real work.
+
+    `updated` is the count that carries information on a re-index. Files whose content hash
+    is unchanged are skipped without being embedded, so `scanned` races to `total` while
+    nothing happens; the gap between the two is what the run is actually doing.
+    """
+
+    scanned: int
+    updated: int
+    total: int
+    current_file: str
+
+
+ProgressCallback = Callable[[IndexProgress], None]
 
 
 def embed_text(text: str) -> list[float]:
@@ -155,7 +174,7 @@ class IndexSession:
         self,
         root: Path,
         repo_name: str,
-        on_progress: Callable[[int, int, str], None] | None = None,
+        on_progress: ProgressCallback | None = None,
         exclude: tuple[str, ...] = (),
     ) -> dict:
         return index_into(self._conn, root, repo_name, on_progress=on_progress, exclude=exclude)
@@ -192,12 +211,13 @@ def index_into(
     conn: sqlite3.Connection,
     root: Path,
     repo_name: str,
-    on_progress: Callable[[int, int, str], None] | None = None,
+    on_progress: ProgressCallback | None = None,
     exclude: tuple[str, ...] = (),
 ) -> dict:
     """Walk root, embed changed files, update the index manifest. Returns a stats dict.
 
-    on_progress(files_scanned, total_files, current_file) is called before processing each file.
+    on_progress is called before each file and once more when the target finishes, so the
+    final tick reports the last file's outcome rather than stopping one short of it.
     """
     indexable_files = collect_indexable_files(root, exclude)
     total_files = len(indexable_files)
@@ -209,11 +229,14 @@ def index_into(
     chunks_added = 0
     run_error: str | None = None
 
+    def report(current_file: str) -> None:
+        if on_progress:
+            on_progress(IndexProgress(scanned=files_scanned, updated=files_updated, total=total_files, current_file=current_file))
+
     try:
         for filepath in indexable_files:
             files_scanned += 1
-            if on_progress:
-                on_progress(files_scanned, total_files, filepath.name)
+            report(filepath.name)
             db_path = compact_path(str(filepath))
 
             try:
@@ -293,6 +316,7 @@ def index_into(
         run_error = str(exc)
 
     finally:
+        report('')
         finish_index_run(
             conn,
             run_id,
@@ -318,7 +342,7 @@ def index_into(
 def index_path(
     root: Path,
     repo_name: str,
-    on_progress: Callable[[int, int, str], None] | None = None,
+    on_progress: ProgressCallback | None = None,
     exclude: tuple[str, ...] = (),
     on_stage: Callable[[str], None] | None = None,
 ) -> dict:
@@ -329,7 +353,7 @@ def index_path(
 
 def index_repo(
     repo_name: str,
-    on_progress: Callable[[int, int, str], None] | None = None,
+    on_progress: ProgressCallback | None = None,
     on_stage: Callable[[str], None] | None = None,
 ) -> dict:
     target = get_target_by_name(repo_name)
@@ -339,7 +363,7 @@ def index_repo(
 
 
 def index_all(
-    on_progress: Callable[[int, int, str], None] | None = None,
+    on_progress: ProgressCallback | None = None,
     on_stage: Callable[[str], None] | None = None,
 ) -> list[dict]:
     """Index every target: portfolio repos, exemplar clones, and configured extra paths."""

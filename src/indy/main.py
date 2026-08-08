@@ -2,7 +2,6 @@ import importlib.metadata
 import json
 import sys
 import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
 
@@ -12,7 +11,6 @@ from pyselfupdate import notify
 from pyselfupdate.typercmd import run_update
 from rich.console import Console
 from rich.progress import BarColumn
-from rich.progress import MofNCompleteColumn
 from rich.progress import Progress
 from rich.progress import SpinnerColumn
 from rich.progress import TaskID
@@ -112,18 +110,27 @@ def index(
 
     t0 = time.perf_counter()
 
+    # counts is rendered rather than MofNCompleteColumn because a target's line carries a
+    # third number: scanned races to the total on a re-index while almost nothing is
+    # re-embedded, so the updated count is the one that says whether work is happening.
     progress = Progress(
         SpinnerColumn(),
         TextColumn('[bold]{task.description}[/bold]'),
         BarColumn(),
-        MofNCompleteColumn(),
+        TextColumn('{task.fields[counts]}'),
         TextColumn('{task.fields[current_file]}'),
         console=console,
     )
 
-    def make_progress_callback(task_id: TaskID) -> Callable[[int, int, str], None]:
-        def on_progress(files_scanned: int, total_files: int, current_file: str) -> None:
-            progress.update(task_id, total=total_files, completed=files_scanned, current_file=current_file)
+    def make_progress_callback(task_id: TaskID) -> service.ProgressCallback:
+        def on_progress(update: service.IndexProgress) -> None:
+            progress.update(
+                task_id,
+                total=update.total,
+                completed=update.scanned,
+                counts=f'{format_counts(update.scanned, update.total)}  {update.updated} updated',
+                current_file=update.current_file,
+            )
 
         return on_progress
 
@@ -150,14 +157,22 @@ def index(
         with progress:
             # Per-target tasks are removed as they finish, so without a task spanning the
             # whole list the bar restarts silently and a long run reads as no progress.
-            overall = progress.add_task('all targets', total=len(targets), current_file='') if len(targets) > 1 else None
+            overall = (
+                progress.add_task('all targets', total=len(targets), counts=format_counts(0, len(targets)), current_file='')
+                if len(targets) > 1
+                else None
+            )
             for target in targets:
-                task_id = progress.add_task(target.name, total=None, current_file='')
+                task_id = progress.add_task(target.name, total=None, counts='', current_file='')
                 result = session.index_path(target.path, target.name, on_progress=make_progress_callback(task_id), exclude=target.exclude)
                 results.append(result)
+                # Draw the target's closing tick before dropping its line, or it ends on the
+                # count from before its last file and reads as one short of what it did.
+                progress.refresh()
                 progress.remove_task(task_id)
                 if overall is not None:
                     progress.advance(overall)
+                    progress.update(overall, counts=format_counts(len(results), len(targets)))
 
         for result in results:
             print_index_result(result)
@@ -182,6 +197,11 @@ def announce_stage(stage: str) -> None:
             console.print(f'Copying the index ({format_size(size)}) to a working copy — indy.db is never written in place.')
     elif stage == 'swapping':
         console.print('Swapping the finished index into place.')
+
+
+def format_counts(done: int, total: int) -> str:
+    """`  7/22`, padded so the number stops jittering as it climbs into another digit."""
+    return f'{done:>{len(str(total))}}/{total}'
 
 
 def format_size(num_bytes: int) -> str:
