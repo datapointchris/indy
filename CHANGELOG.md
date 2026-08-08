@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v0.7.1 (2026-08-08)
+
+### Bug Fixes
+
+- **index**: Keep the work when a run is interrupted
+  ([`8c0f330`](https://github.com/datapointchris/indy/commit/8c0f33089a33dcfbaae2238bfdf8f565da57827f))
+
+Building into a working copy meant an interrupted run threw away everything it had done. Ctrl-C is
+  how a multi-hour index gets stopped, so this lost whole runs — and left no trace they happened,
+  because the index_run rows live in the working copy too. The next run then correctly found nothing
+  indexed and offered to re-embed every file, which is how it surfaced.
+
+An interrupt now swaps the working copy in. Every file is committed as it is embedded, so the copy
+  is a complete database at the moment it stops. A failure to open or commit still discards, leaving
+  the index as it was.
+
+The CLI says what was kept rather than only that it stopped, and exits 130.
+
+
 ## v0.7.0 (2026-08-08)
 
 ### Features
