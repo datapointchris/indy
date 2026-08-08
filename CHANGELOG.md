@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v0.6.0 (2026-08-08)
+
+### Features
+
+- **index**: Count progress against the work, not the file list
+  ([`b6045ee`](https://github.com/datapointchris/indy/commit/b6045eedd4d07e201a1709256f80cab5672ac17c))
+
+A target now hashes every file before embedding any of them, so it knows how many need re-embedding
+  and can say so. The bar tracks that count rather than the walk: previously it raced through
+  skipped files and crawled through changed ones, which on a re-index meant it filled while nothing
+  happened.
+
+Two lines per target, matching the two passes:
+
+fastapi 455/2871 scanned behind-a-proxy.md fastapi 29/2871 updated · 2871 files README.md
+
+The scan costs one extra read of each file that changed, since those are read again to embed.
+  Against the cost of embedding them it does not show.
+
+
 ## v0.5.0 (2026-08-08)
 
 ### Features
