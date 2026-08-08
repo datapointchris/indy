@@ -85,6 +85,12 @@ multi-hour run and disproportionate for one small repo, and results appear all a
 end rather than incrementally. In exchange, a crashed run cannot damage the index it was
 built from.
 
+**An interrupt swaps in what the run managed.** Ctrl-C is how a long index gets stopped, and
+every file is committed as it is embedded, so the working copy is a complete database at that
+moment. Discarding it lost hours of work and left no trace the run happened at all — the
+`index_run` rows live in the working copy too — so the next run correctly found nothing
+indexed and offered to re-embed every file.
+
 ## Embeddings
 
 Ollama REST API at `http://localhost:11434`. Model: `nomic-embed-text` (768-dim, cosine similarity).

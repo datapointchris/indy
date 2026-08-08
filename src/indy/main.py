@@ -185,8 +185,8 @@ def index(
     # The session wraps the progress display rather than sitting inside it: both the copy it
     # opens with and the swap it closes with are silent multi-second pauses, and announcing
     # them from under a live progress bar puts them out of order with the work they bracket.
-    with service.index_session(on_stage=announce_stage) as session:
-        with progress:
+    try:
+        with service.index_session(on_stage=announce_stage) as session, progress:
             # Per-target tasks are removed as they finish, so without a task spanning the
             # whole list the bar restarts silently and a long run reads as no progress.
             overall = (
@@ -212,6 +212,13 @@ def index(
             total_updated = sum(r['files_updated'] for r in results)
             total_chunks = sum(r['chunks_added'] for r in results)
             console.print(f'\n[bold]Done.[/bold] {len(results)} repos, {total_updated} files updated, {total_chunks} chunks added.')
+
+    except KeyboardInterrupt:
+        # The session has already swapped the partial index in by the time this runs. Say so:
+        # stopping a run that has been going for hours needs to state what was kept, or the
+        # next run offering to re-embed everything is the only answer you get.
+        console.print('\n[bold]Stopped.[/bold] Everything embedded before the interrupt is in the index.')
+        raise typer.Exit(130) from None
 
     elapsed = time.perf_counter() - t0
     console.print(f'Completed in {format_elapsed(elapsed)}')

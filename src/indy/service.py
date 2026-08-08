@@ -187,10 +187,16 @@ class IndexSession:
 
 @contextmanager
 def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[IndexSession]:
-    """Open a working copy, yield a session that writes to it, and swap it in on success.
+    """Open a working copy, yield a session that writes to it, and swap it in when it ends.
 
-    A run that raises leaves the index exactly as it was — the working copy is thrown away
-    and indy.db was never opened for writing in the first place.
+    An interrupt swaps in what the run managed, rather than discarding it. Every file is
+    committed as it is embedded, so the working copy is a complete database at every moment
+    — throwing it away would mean a run stopped at hour three had done nothing at all, which
+    is what building into a copy cost until this was handled. Ctrl-C is the ordinary way to
+    stop a long index, not an error.
+
+    A failure to open or commit is different: nothing partial is left behind, and the index
+    stays exactly as it was, having never been opened for writing.
 
     on_stage is called with 'copying' before the seed copy and 'swapping' before the rename.
     Both block for as long as a database of this size takes to move, and a CLI that says
@@ -201,6 +207,9 @@ def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[Ind
     conn = open_working_db()
     try:
         yield IndexSession(conn)
+    except KeyboardInterrupt:
+        commit_working_db(conn)
+        raise
     except BaseException:
         discard_working_db(conn)
         raise

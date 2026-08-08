@@ -81,6 +81,26 @@ def test_reading_leaves_the_index_untouched(existing_index):
     assert sorted(p.name for p in existing_index.iterdir()) == ['indy.db']
 
 
+def test_an_interrupted_run_keeps_what_it_embedded(existing_index):
+    """Ctrl-C is how a multi-hour index gets stopped, not a failure.
+
+    Discarding the working copy on interrupt loses the whole run — including its index_run
+    rows, so it leaves no trace it ever happened, and the next run offers to re-embed
+    everything. Every file is committed as it goes, so the copy is a complete database and
+    swapping it in is the correct answer.
+    """
+    with pytest.raises(KeyboardInterrupt), service.index_session() as session:
+        add_file(session._conn, '~/r/b.py')
+        session._conn.commit()
+        raise KeyboardInterrupt
+
+    read = storage.get_read_db()
+    paths = {row['file_path'] for row in read.execute('SELECT file_path FROM indexed_file')}
+    read.close()
+    assert paths == {'~/r/a.py', '~/r/b.py'}
+    assert sorted(p.name for p in existing_index.iterdir()) == ['indy.db']
+
+
 def test_a_failed_run_leaves_the_index_as_it_was(existing_index):
     before = (existing_index / 'indy.db').read_bytes()
 
