@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v0.7.2 (2026-08-08)
+
+### Bug Fixes
+
+- **cli**: Say what a run is doing, not how it does it
+  ([`d1e0c9c`](https://github.com/datapointchris/indy/commit/d1e0c9c1d6b5d584c3319bfa90354ebae901b732))
+
+"Copying the index to a working copy — indy.db is never written in place" describes indy's
+  implementation to someone watching an index build, which is the leak cli-design.md names: the copy
+  and the rename are how the guarantee is kept, not a fact about the index. Now "Snapshotting the
+  index (1.4 GB)" and "Saving the updated index", and the stage names behind them match.
+
+The file being worked on is green and fenced from the counts, which ran together into one unreadable
+  string. It is escaped on the way out because the corpus holds route files like [slug].md, and rich
+  would read the name it is meant to print as markup.
+
+
 ## v0.7.1 (2026-08-08)
 
 ### Bug Fixes
