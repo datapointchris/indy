@@ -124,11 +124,22 @@ def index(
 
     def make_progress_callback(task_id: TaskID) -> service.ProgressCallback:
         def on_progress(update: service.IndexProgress) -> None:
+            if update.to_update is None:
+                # Still hashing: how much needs re-embedding is not known yet, so the bar
+                # tracks the scan and says so rather than implying work is underway.
+                progress.update(
+                    task_id,
+                    total=update.total,
+                    completed=update.scanned,
+                    counts=f'{format_counts(update.scanned, update.total)} scanned',
+                    current_file=update.current_file,
+                )
+                return
             progress.update(
                 task_id,
-                total=update.total,
-                completed=update.scanned,
-                counts=f'{format_counts(update.scanned, update.total)}  {update.updated} updated',
+                total=update.to_update,
+                completed=update.updated,
+                counts=f'{format_counts(update.updated, update.to_update)} updated · {update.total} files',
                 current_file=update.current_file,
             )
 

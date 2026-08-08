@@ -71,13 +71,15 @@ _INDEXABLE_EXTENSIONS = CODE_EXTENSIONS | DOC_EXTENSIONS | CONFIG_EXTENSIONS
 class IndexProgress:
     """One tick of an in-flight target: how far through it is, and how much was real work.
 
-    `updated` is the count that carries information on a re-index. Files whose content hash
-    is unchanged are skipped without being embedded, so `scanned` races to `total` while
-    nothing happens; the gap between the two is what the run is actually doing.
+    A target runs in two passes and this record covers both. While `to_update` is None the
+    scan is still hashing files to work out what changed, and `scanned` is the count that
+    moves. Once it is known, `updated` moves against it and is the only number that reflects
+    real work — on a re-index everything is scanned and almost nothing is re-embedded.
     """
 
     scanned: int
     updated: int
+    to_update: int | None
     total: int
     current_file: str
 
@@ -227,15 +229,45 @@ def index_into(
     files_scanned = 0
     files_updated = 0
     chunks_added = 0
+    to_update: int | None = None
     run_error: str | None = None
 
     def report(current_file: str) -> None:
         if on_progress:
-            on_progress(IndexProgress(scanned=files_scanned, updated=files_updated, total=total_files, current_file=current_file))
+            on_progress(
+                IndexProgress(
+                    scanned=files_scanned,
+                    updated=files_updated,
+                    to_update=to_update,
+                    total=total_files,
+                    current_file=current_file,
+                )
+            )
 
     try:
+        # Hashing every file before embedding any of them is what lets the run state how much
+        # work it has, rather than only how many files it has walked past. On a re-index the
+        # two are nothing alike: everything is read and hashed, and almost none of it is
+        # re-embedded. Files needing work are read a second time below, which costs one extra
+        # pass over the ones that changed and is invisible beside the cost of embedding them.
+        pending = []
         for filepath in indexable_files:
             files_scanned += 1
+            report(filepath.name)
+            try:
+                content_hash = compute_content_hash(filepath.read_text(encoding='utf-8', errors='ignore'))
+            except OSError:
+                pending.append(filepath)  # let the work pass fail on it and record why
+                continue
+            existing = get_indexed_file(conn, compact_path(str(filepath)))
+            if existing and existing['content_hash'] == content_hash:
+                continue  # unchanged — skip re-embedding
+            pending.append(filepath)
+
+        to_update = len(pending)
+        report('')
+
+        for filepath in pending:
             report(filepath.name)
             db_path = compact_path(str(filepath))
 
@@ -243,10 +275,6 @@ def index_into(
                 content = filepath.read_text(encoding='utf-8', errors='ignore')
                 mtime = filepath.stat().st_mtime
                 content_hash = compute_content_hash(content)
-
-                existing = get_indexed_file(conn, db_path)
-                if existing and existing['content_hash'] == content_hash:
-                    continue  # unchanged — skip re-embedding
 
                 language = detect_language(str(filepath))
                 chunks = chunk_file(db_path, content, repo_name)
