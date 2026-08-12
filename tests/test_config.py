@@ -36,7 +36,40 @@ def test_env_var_beats_the_config_file(tmp_path, monkeypatch):
 
 def test_default_applies_when_neither_layer_names_one(tmp_path, monkeypatch):
     monkeypatch.delenv('INDY_REPOS_FILE', raising=False)
+    monkeypatch.delenv('REPOS_JSON', raising=False)
     assert config.resolve_path('INDY_REPOS_FILE', 'repos_file', tmp_path / 'default.json', {}) == tmp_path / 'default.json'
+
+
+def test_the_shared_variable_answers_when_nothing_else_does(tmp_path, monkeypatch):
+    """The registry is read from one place by several tools, so the machine declares it once."""
+    monkeypatch.delenv('INDY_REPOS_FILE', raising=False)
+    monkeypatch.setenv('REPOS_JSON', str(tmp_path / 'declared.json'))
+    resolved = config.resolve_path('INDY_REPOS_FILE', 'repos_file', tmp_path / 'default.json', {}, shared_env='REPOS_JSON')
+    assert resolved == tmp_path / 'declared.json'
+
+
+def test_the_config_file_beats_the_shared_variable(tmp_path, monkeypatch):
+    """Naming a different registry for indy alone has to keep working."""
+    monkeypatch.delenv('INDY_REPOS_FILE', raising=False)
+    monkeypatch.setenv('REPOS_JSON', str(tmp_path / 'declared.json'))
+    resolved = config.resolve_path(
+        'INDY_REPOS_FILE', 'repos_file', tmp_path / 'default.json', {'repos_file': '~/from-config.json'}, shared_env='REPOS_JSON'
+    )
+    assert resolved == Path.home() / 'from-config.json'
+
+
+def test_the_shared_variable_is_ignored_when_not_asked_for(tmp_path, monkeypatch):
+    """A setting indy owns must not pick up a registry path that happens to be exported."""
+    monkeypatch.delenv('INDY_DIR', raising=False)
+    monkeypatch.setenv('REPOS_JSON', str(tmp_path / 'declared.json'))
+    assert config.resolve_path('INDY_DIR', 'data_dir', tmp_path / 'own', {}) == tmp_path / 'own'
+
+
+def test_setting_source_names_the_shared_variable(tmp_path, monkeypatch):
+    monkeypatch.delenv('INDY_REPOS_FILE', raising=False)
+    monkeypatch.setenv('REPOS_JSON', str(tmp_path / 'declared.json'))
+    assert config.setting_source('INDY_REPOS_FILE', 'repos_file', {}, shared_env='REPOS_JSON') == '$REPOS_JSON'
+    assert config.setting_source('INDY_REPOS_FILE', 'repos_file', {}) == 'default'
 
 
 def test_extra_paths_default_to_none(monkeypatch):

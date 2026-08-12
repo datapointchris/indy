@@ -4,6 +4,10 @@ Every path indy reads or writes resolves the same way: an environment variable, 
 key in config.toml, then a tool-owned default. No default names a directory outside
 indy's own XDG dirs — where a repo registry lives, or which loose directories are worth
 indexing, is a property of the machine and belongs in config.toml.
+
+A file indy reads but does not own takes one more rung between the config key and the
+default: a shared variable the machine declares once for every tool that reads it. See
+resolve_path's `shared_env`.
 """
 
 from __future__ import annotations
@@ -38,9 +42,26 @@ def load_user_config(path: Path | None = None) -> dict[str, Any]:
 USER_CONFIG = load_user_config()
 
 
-def resolve_path(env_var: str, key: str, default: Path, config: dict[str, Any] | None = None) -> Path:
+def resolve_path(
+    env_var: str,
+    key: str,
+    default: Path,
+    config: dict[str, Any] | None = None,
+    shared_env: str | None = None,
+) -> Path:
+    """Resolve a path: $env_var, then the config key, then $shared_env, then the default.
+
+    `shared_env` is for a file indy reads but does not own — the registry, which several
+    tools read from one place. It sits below the config so naming a different file for
+    indy alone still works, and above the default so an unset value is the only route to
+    indy's own directory. Only a *declared* variable belongs here: dotfiles carries
+    REPOS_JSON in install/flags.yml under `required:`, so `dotfiles check` fails while it
+    is unset rather than letting indy quietly index whatever its data directory holds.
+    """
     config = USER_CONFIG if config is None else config
     value = os.environ.get(env_var) or config.get(key)
+    if not value and shared_env:
+        value = os.environ.get(shared_env)
     return Path(value).expanduser() if value else default
 
 
@@ -49,17 +70,22 @@ def resolve_str(env_var: str, key: str, default: str, config: dict[str, Any] | N
     return os.environ.get(env_var) or config.get(key) or default
 
 
-def setting_source(env_var: str, key: str, config: dict[str, Any] | None = None) -> str:
-    """Which of the three layers supplied a setting.
+def setting_source(env_var: str, key: str, config: dict[str, Any] | None = None, shared_env: str | None = None) -> str:
+    """Which layer supplied a setting.
 
     Travels with the value because the value alone does not explain itself: an index that
     searches nothing is usually a config file that was never read, not a wrong path.
+
+    Kept in step with resolve_path by hand. A source that names a layer the value did not
+    come from is worse than none, because it answers the question the reader arrived with.
     """
     config = USER_CONFIG if config is None else config
     if os.environ.get(env_var):
         return f'${env_var}'
     if config.get(key):
         return str(CONFIG_PATH)
+    if shared_env and os.environ.get(shared_env):
+        return f'${shared_env}'
     return 'default'
 
 
@@ -91,7 +117,12 @@ WORKING_DB_PATH = INDY_DIR / 'indy.db.building'
 # Registry locations default to indy-owned paths. Sharing one registry with other tools
 # is an arrangement between those tools, so it belongs in config.toml on the machines
 # that have such a file — never in the default, which every machine inherits.
-REPOS_FILE = resolve_path('INDY_REPOS_FILE', 'repos_file', CONFIG_DIR / 'repos.json')
+REPOS_FILE = resolve_path('INDY_REPOS_FILE', 'repos_file', CONFIG_DIR / 'repos.json', shared_env='REPOS_JSON')
+
+# No shared_env for the exemplar registry, deliberately. Only REPOS_JSON is declared, and a
+# rung naming an undeclared variable resolves to nothing and silently drops through to the
+# default — the failure this layer exists to prevent. The exemplar clones are fleet-only, so
+# the fleet-scoped config that names them is the right place for that path to live.
 EXEMPLAR_REPOS_FILE = resolve_path('INDY_EXEMPLAR_REPOS_FILE', 'exemplar_repos_file', CONFIG_DIR / 'exemplar-repos.json')
 
 EXTRA_PATHS_RAW: list[dict[str, str]] = resolve_extra_paths()
