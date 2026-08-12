@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v0.10.0 (2026-08-12)
+
+### Features
+
+- **config**: Resolve $REPOS_JSON below the config key
+  ([`ff5985a`](https://github.com/datapointchris/indy/commit/ff5985ab087dd0ddb3c52b70bcc2a980e3599513))
+
+resolve_path gains an optional shared_env for a file indy reads but does not own. The registry is
+  read from one place by several tools, so a machine declares the path once instead of each tool
+  being pointed at it separately — which is what forced a hand-made symlink from a data directory to
+  the real file, reported by nothing.
+
+It sits below repos_file, so naming a different registry for indy alone still works, and above the
+  default, so an unset value is the only route to indy's own directory.
+
+The exemplar registry deliberately gets no shared_env: only REPOS_JSON is declared, and a rung
+  naming an undeclared variable resolves to nothing and drops silently through to the default.
+
+
 ## v0.9.1 (2026-08-12)
 
 ### Bug Fixes
