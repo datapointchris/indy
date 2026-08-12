@@ -115,6 +115,13 @@ Search supports `--owned` / `--reference` to filter. Default is to search everyt
 
 ## What Gets Indexed
 
+A file that disappears between runs is pruned by the next index of its target, with its
+chunks and vectors. That has to be the walk's job: indexing only ever visits files that
+exist, so nothing else revisits the path that stopped existing. The prune is skipped when
+the walk finds nothing, because a moved root and a failed `git ls-files` look identical to a
+target whose every file was deleted — leaving ghosts is the safe direction, and `indy forget`
+clears a label that really did go.
+
 Active repos from `repos_file`, exemplar clones from `exemplar_repos_file`, plus any
 `[[extra_paths]]` in config.toml. All three default to nothing outside indy's own XDG dirs —
 a default that names a particular machine's layout is the bug this arrangement exists to

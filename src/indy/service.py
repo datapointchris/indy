@@ -43,6 +43,7 @@ from indy.storage import commit_working_db
 from indy.storage import delete_error_files
 from indy.storage import delete_file_chunks
 from indy.storage import delete_file_references
+from indy.storage import delete_indexed_file
 from indy.storage import delete_repo
 from indy.storage import discard_working_db
 from indy.storage import finish_index_run
@@ -53,6 +54,7 @@ from indy.storage import get_indexed_file
 from indy.storage import get_indexed_repos
 from indy.storage import get_read_db
 from indy.storage import get_recent_runs
+from indy.storage import get_repo_file_paths
 from indy.storage import get_repo_scan_history
 from indy.storage import get_symbol_callees
 from indy.storage import get_symbol_callers
@@ -224,6 +226,32 @@ def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[Ind
     commit_working_db(conn)
 
 
+def prune_missing_files(conn: sqlite3.Connection, repo_name: str, root: Path, seen: set[str]) -> int:
+    """Drop manifest rows under root that this run did not walk past. Returns the count.
+
+    A file deleted or renamed between runs leaves its row, its chunks and its vectors
+    behind, and no later run can clear them: indexing only ever visits files that exist,
+    so nothing revisits the path that stopped existing. Search kept returning those
+    chunks under a path that resolves to nothing.
+
+    Scoped to paths under this run's root rather than to the whole label, because a label
+    can be produced by more than one root — `index --path` names a target after its
+    directory — and a run that walked one of them must not delete another's rows.
+
+    A file the target's exclude patterns now cover is pruned by the same walk, which is
+    correct: it is no longer indexable, and leaving it in would mean the pattern only
+    applies to repos indexed after it was written.
+    """
+    prefix = compact_path(str(root)).rstrip('/')
+    stale = [path for path in get_repo_file_paths(conn, repo_name) if path not in seen and path.startswith(f'{prefix}/')]
+    for path in stale:
+        delete_file_chunks(conn, path)
+        delete_file_references(conn, path)
+        delete_indexed_file(conn, path)
+    conn.commit()
+    return len(stale)
+
+
 def index_into(
     conn: sqlite3.Connection,
     root: Path,
@@ -244,6 +272,7 @@ def index_into(
     files_scanned = 0
     files_updated = 0
     chunks_added = 0
+    files_pruned = 0
     to_update: int | None = None
     run_error: str | None = None
 
@@ -355,6 +384,13 @@ def index_into(
                 )
                 conn.commit()
 
+        # Only against a walk that found something. An empty walk over a non-empty manifest
+        # is a root that moved or a `git ls-files` that failed far more often than it is a
+        # target whose every file was deleted, and pruning on it would empty the label. The
+        # safe direction leaves ghosts, and `indy forget` clears a label that really did go.
+        if indexable_files:
+            files_pruned = prune_missing_files(conn, repo_name, root, {compact_path(str(f)) for f in indexable_files})
+
     except Exception as exc:
         run_error = str(exc)
 
@@ -377,6 +413,7 @@ def index_into(
         'repo': repo_name,
         'files_scanned': files_scanned,
         'files_updated': files_updated,
+        'files_pruned': files_pruned,
         'chunks_added': chunks_added,
         'error': run_error,
     }
@@ -496,6 +533,7 @@ def refresh(repo: str | None = None) -> dict:
     return {
         'repos_refreshed': len(results),
         'files_updated': sum(r['files_updated'] for r in results),
+        'files_pruned': sum(r['files_pruned'] for r in results),
         'chunks_added': sum(r['chunks_added'] for r in results),
         'errors': [r['error'] for r in results if r['error']],
     }

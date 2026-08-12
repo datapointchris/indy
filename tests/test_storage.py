@@ -1,10 +1,12 @@
-"""Guards on the two properties that make the index safe to replicate.
+"""Guards on the two properties that make the index safe to replicate, and on the deletes.
 
-Both failed silently before: searching wrote to the database, and a run rewrote the file in
-place while a syncer was reading it. Neither reported anything — the index just decayed.
+Both properties failed silently before: searching wrote to the database, and a run rewrote
+the file in place while a syncer was reading it. Neither reported anything — the index just
+decayed. The deletes are here because they are writes, so they owe the same guarantees.
 """
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -271,3 +273,78 @@ def test_clearing_errors_swaps_a_new_index_in(existing_index):
     assert read.execute("SELECT COUNT(*) FROM indexed_file WHERE status != 'ok'").fetchone()[0] == 0
     read.close()
     assert sorted(p.name for p in existing_index.iterdir()) == ['indy.db']
+
+
+@pytest.fixture
+def stub_embedding(monkeypatch):
+    """Indexing without ollama. What the vector holds is irrelevant to which rows survive."""
+    monkeypatch.setattr(service, 'embed_text', lambda text: [0.1] * config.EMBEDDING_DIM)
+
+
+def index_once(root, label='r'):
+    conn = storage.open_working_db()
+    result = service.index_into(conn, root, label)
+    storage.commit_working_db(conn)
+    return result
+
+
+def make_repo(tmp_path, **files):
+    root = tmp_path / 'repo'
+    root.mkdir()
+    for name, body in files.items():
+        (root / name).write_text(body)
+    return root
+
+
+def indexed_paths():
+    read = storage.get_read_db()
+    try:
+        return {row['file_path'] for row in read.execute('SELECT file_path FROM indexed_file')}
+    finally:
+        read.close()
+
+
+def test_a_deleted_file_leaves_the_index_on_the_next_run(indy_dir, tmp_path, stub_embedding):
+    """Nothing revisits a path that stopped existing, so its rows survived every later run."""
+    root = make_repo(tmp_path, **{'kept.md': '# Kept\n\nStays put.\n', 'gone.md': '# Gone\n\nAbout to go.\n'})
+    index_once(root)
+
+    (root / 'gone.md').unlink()
+    result = index_once(root)
+
+    assert result['files_pruned'] == 1
+    assert {Path(p).name for p in indexed_paths()} == {'kept.md'}
+
+    read = storage.get_read_db()
+    chunk_paths = {row[0] for row in read.execute('SELECT DISTINCT file_path FROM chunk')}
+    read.close()
+    assert {Path(p).name for p in chunk_paths} == {'kept.md'}
+
+
+def test_a_walk_that_finds_nothing_never_empties_the_label(indy_dir, tmp_path, monkeypatch, stub_embedding):
+    """A moved root and a failed `git ls-files` both look like this, and both are far likelier
+    than a target whose every file was deleted. Leaving ghosts is the safe direction; a label
+    that really did go is what `indy forget` is for."""
+    root = make_repo(tmp_path, **{'a.md': '# A\n\nSome prose.\n'})
+    index_once(root)
+
+    monkeypatch.setattr(service, 'collect_indexable_files', lambda *args, **kwargs: [])
+    result = index_once(root)
+
+    assert result['files_pruned'] == 0
+    assert {Path(p).name for p in indexed_paths()} == {'a.md'}
+
+
+def test_pruning_only_touches_the_root_that_was_walked(indy_dir, tmp_path):
+    """`index --path` names a target after its directory, so one label can have two roots.
+    A run that walked one of them must not delete the other's rows."""
+    conn = storage.open_working_db()
+    add_indexed_file(conn, 'shared', str(tmp_path / 'a' / 'x.md'))
+    add_indexed_file(conn, 'shared', str(tmp_path / 'b' / 'y.md'))
+    storage.commit_working_db(conn)
+
+    conn = storage.open_working_db()
+    assert service.prune_missing_files(conn, 'shared', tmp_path / 'a', set()) == 1
+    storage.commit_working_db(conn)
+
+    assert {Path(p).name for p in indexed_paths()} == {'y.md'}

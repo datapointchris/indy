@@ -322,6 +322,16 @@ def delete_error_files(conn: sqlite3.Connection) -> int:
     return cursor.rowcount
 
 
+def get_repo_file_paths(conn: sqlite3.Connection, repo: str) -> list[str]:
+    """Every file path the manifest holds for a repo, whatever its status."""
+    return [row[0] for row in conn.execute('SELECT file_path FROM indexed_file WHERE repo = ?', (repo,))]
+
+
+def delete_indexed_file(conn: sqlite3.Connection, file_path: str) -> None:
+    """Remove one manifest row. Its chunks and references are separate deletes."""
+    conn.execute('DELETE FROM indexed_file WHERE file_path = ?', (file_path,))
+
+
 def delete_repo(conn: sqlite3.Connection, repo: str) -> dict:
     """Remove every row a repo label owns. Returns what was deleted, per table.
 

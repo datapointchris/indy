@@ -211,8 +211,10 @@ def index(
             print_index_result(result)
         if len(results) > 1:
             total_updated = sum(r['files_updated'] for r in results)
+            total_pruned = sum(r['files_pruned'] for r in results)
             total_chunks = sum(r['chunks_added'] for r in results)
-            console.print(f'\n[bold]Done.[/bold] {len(results)} repos, {total_updated} files updated, {total_chunks} chunks added.')
+            pruned = f', {total_pruned} deleted files removed' if total_pruned else ''
+            console.print(f'\n[bold]Done.[/bold] {len(results)} repos, {total_updated} files updated, {total_chunks} chunks added{pruned}.')
 
     except KeyboardInterrupt:
         # The session has already swapped the partial index in by the time this runs. Say so:
@@ -282,9 +284,13 @@ def format_elapsed(seconds: float) -> str:
 
 def print_index_result(result: dict) -> None:
     status_str = f'[red]error: {result["error"]}[/red]' if result['error'] else '[green]ok[/green]'
+    # Pruning is silent when there was nothing to prune, which is almost every run. A
+    # standing "pruned 0" would train the eye past the one run that removed something.
+    pruned = f'-{result["files_pruned"]} deleted, ' if result.get('files_pruned') else ''
     console.print(
         f'  {result["repo"]}: scanned {result["files_scanned"]}, '
         f'updated {result["files_updated"]}, '
+        f'{pruned}'
         f'+{result["chunks_added"]} chunks — {status_str}'
     )
 
