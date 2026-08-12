@@ -1,6 +1,30 @@
 # CHANGELOG
 
 
+## v0.8.0 (2026-08-12)
+
+### Features
+
+- **forget**: Drop a stale repo label from the index
+  ([`cd01a26`](https://github.com/datapointchris/indy/commit/cd01a26f964439a3052af67221bb70aa5e6d6d55))
+
+A renamed or absorbed target leaves its old label behind, and re-indexing cannot clear it: a file
+  whose content_hash is unchanged is skipped, so it keeps the label it was first indexed under
+  however many runs go past. The measured case was ~/notes/dev keeping notes-dev after the target
+  widened to notes, which made 'search --repo notes' silently miss 58 files.
+
+Deleting rows goes through index_session like every other write, so the index is still only ever
+  replaced whole. vec_chunks carries no foreign key back to chunk, so its rows go by rowid gathered
+  before the chunks are deleted, and symbol_reference is keyed by source_file alone, so the manifest
+  is read before it is emptied.
+
+index_run rows go too. A label surviving in the run history is one stats still lists, which would
+  leave the verb's name a lie.
+
+An unknown label is a usage error ahead of the session, because opening one copies the whole
+  database and a typo should not pay for that.
+
+
 ## v0.7.3 (2026-08-12)
 
 ### Bug Fixes
