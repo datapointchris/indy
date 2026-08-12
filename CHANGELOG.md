@@ -1,6 +1,37 @@
 # CHANGELOG
 
 
+## v0.7.3 (2026-08-12)
+
+### Bug Fixes
+
+- Reject a registry entry with no status
+  ([`1c49ad7`](https://github.com/datapointchris/indy/commit/1c49ad75437ff721b77999ee5a8749626cd389c7))
+
+Skipping a status-less entry silently is what let this reader disagree with fleet about which repos
+  exist. fleet counted such an entry as active and indy dropped it, so both produced a plausible
+  list and nothing could compare them.
+
+status is now required, asserted at commit time in the repo holding the registry. A missing one
+  raises and names the offenders rather than quietly shortening the index, which is the failure
+  nobody would notice.
+
+standards/data.md, 'A registry field that selects what tools act on is required, never defaulted'.
+
+### Build System
+
+- **precommit**: Resync to forge toolchain 14
+  ([`a362e03`](https://github.com/datapointchris/indy/commit/a362e03d3852000748425d1ac539fd4e60ae6d98))
+
+### Documentation
+
+- Cite the standards without a machine path
+  ([`e818b86`](https://github.com/datapointchris/indy/commit/e818b867df32e6ca8bc5d810ad3456f3b4653eb5))
+
+The citation carried an absolute path from one machine's layout. What a reader needs is the file and
+  the section, and those do not move.
+
+
 ## v0.7.2 (2026-08-08)
 
 ### Bug Fixes
@@ -230,7 +261,7 @@ indy was one of the CLIs that could not say which build was running, even though
   is wired to an eager root option now, printing `indy <version>` with the commit appended when uv
   installed from a git ref.
 
-The rule and its reasoning are in `standards/cli-design.md` § "`--version` on every CLI".
+The rule and its reasoning are in `~/dev/standards/cli-design.md` § "`--version` on every CLI".
 
 Also the first CLI test in this repo, covering the two things a caller shelling out to indy relies
   on: the version line, and help plus exit 2 on a bare invocation.
