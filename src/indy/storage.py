@@ -322,6 +322,32 @@ def delete_error_files(conn: sqlite3.Connection) -> int:
     return cursor.rowcount
 
 
+def delete_repo(conn: sqlite3.Connection, repo: str) -> dict:
+    """Remove every row a repo label owns. Returns what was deleted, per table.
+
+    vec_chunks is a vec0 virtual table carrying no foreign key back to chunk, so its
+    rows go by rowid gathered from the chunks first — the same walk delete_file_chunks
+    does, for the same reason, and the reason the chunk rows cannot be deleted first.
+
+    symbol_reference is keyed by source_file alone, so the manifest is what says which
+    files belonged to the label. It is read before indexed_file is touched.
+
+    index_run goes too. A label that survives in the run history is one `stats` still
+    lists and `forget` did not forget, which would leave the verb's name a lie.
+    """
+    file_paths = [row[0] for row in conn.execute('SELECT file_path FROM indexed_file WHERE repo = ?', (repo,))]
+    chunk_ids = [row[0] for row in conn.execute('SELECT id FROM chunk WHERE repo = ?', (repo,))]
+    for chunk_id in chunk_ids:
+        conn.execute('DELETE FROM vec_chunks WHERE rowid = ?', (chunk_id,))
+    conn.execute('DELETE FROM chunk WHERE repo = ?', (repo,))
+    for file_path in file_paths:
+        conn.execute('DELETE FROM symbol_reference WHERE source_file = ?', (file_path,))
+    files = conn.execute('DELETE FROM indexed_file WHERE repo = ?', (repo,)).rowcount
+    runs = conn.execute('DELETE FROM index_run WHERE repo = ?', (repo,)).rowcount
+    conn.commit()
+    return {'files': files, 'chunks': len(chunk_ids), 'runs': runs}
+
+
 def get_index_stats(conn: sqlite3.Connection) -> dict:
     total_files = conn.execute("SELECT COUNT(*) FROM indexed_file WHERE status = 'ok'").fetchone()[0]
     repo_count = conn.execute("SELECT COUNT(DISTINCT repo) FROM indexed_file WHERE status = 'ok'").fetchone()[0]

@@ -27,6 +27,7 @@ indy config                     # resolved settings and which layer supplied eac
 indy status                     # index health: file counts, last run
 indy errors                     # per-file error listing grouped by repo
 indy errors-clear               # remove error records (re-attempted on next index)
+indy forget notes-dev           # drop a stale label, so its files re-index under the current one
 indy stats                      # bar charts: files/chunks per repo, last indexed
 indy stats myrepo               # scan history charts for a specific repo
 indy repos                      # list indexed repos with chunk counts

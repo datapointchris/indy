@@ -43,6 +43,7 @@ from indy.storage import commit_working_db
 from indy.storage import delete_error_files
 from indy.storage import delete_file_chunks
 from indy.storage import delete_file_references
+from indy.storage import delete_repo
 from indy.storage import discard_working_db
 from indy.storage import finish_index_run
 from indy.storage import get_chunks_by_symbol
@@ -183,6 +184,9 @@ class IndexSession:
 
     def clear_errors(self) -> int:
         return delete_error_files(self._conn)
+
+    def forget_repo(self, repo: str) -> dict:
+        return delete_repo(self._conn, repo)
 
 
 @contextmanager
@@ -507,6 +511,30 @@ def clear_errors(on_stage: Callable[[str], None] | None = None) -> int:
     """
     with index_session(on_stage=on_stage) as session:
         return session.clear_errors()
+
+
+def forget_repo(repo: str, on_stage: Callable[[str], None] | None = None) -> dict:
+    """Delete everything indexed under one repo label. Returns what was deleted, per table.
+
+    For a label the registry no longer produces: a target that was renamed, or absorbed
+    into a wider one. Re-indexing cannot clear it, because a file whose content_hash is
+    unchanged is skipped and keeps the label it was first indexed under.
+
+    Recoverable by construction — the filesystem is the source of truth and the next
+    index rebuilds whatever is still a target, which is why this asks for no
+    confirmation, as `clear_errors` does not either.
+    """
+    with index_session(on_stage=on_stage) as session:
+        return session.forget_repo(repo)
+
+
+def indexed_repo_names() -> list[str]:
+    """Every label the index currently holds, whether or not it is still a target."""
+    conn = get_read_db()
+    try:
+        return sorted({row[0] for row in conn.execute('SELECT DISTINCT repo FROM indexed_file')})
+    finally:
+        conn.close()
 
 
 def get_dependencies(symbol_name: str, repo: str | None = None, direction: str = 'both') -> dict:

@@ -324,6 +324,19 @@ def errors_clear():
         console.print('No error records to clear.')
 
 
+@indy_app.command('forget')
+def forget(
+    repo: str = typer.Argument(..., help='The indexed repo label to remove.'),
+):
+    """Remove one repo label from the index, so its files are re-indexed under the current one."""
+    if repo not in service.indexed_repo_names():
+        raise typer.BadParameter(f'{repo!r} is not a label in the index. See the ones that are with `indy repos`.')
+
+    removed = service.forget_repo(repo, on_stage=announce_stage)
+    console.print(f'Forgot [bold]{repo}[/bold]: {removed["files"]} files, {removed["chunks"]} chunks, {removed["runs"]} runs.')
+    console.print('Run [bold]indy index[/bold] to re-index whatever is still a target.')
+
+
 @indy_app.command('search')
 def search(
     query: str = typer.Argument(..., help='Natural language search query.'),

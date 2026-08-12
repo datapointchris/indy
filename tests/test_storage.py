@@ -8,6 +8,7 @@ import sqlite3
 
 import pytest
 
+from indy import config
 from indy import service
 from indy import storage
 
@@ -59,6 +60,86 @@ def test_a_finished_index_stands_alone(existing_index):
     assert check.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
     assert check.execute('PRAGMA journal_mode').fetchone()[0] == 'delete'
     check.close()
+
+
+def add_indexed_file(conn, repo, path):
+    """One file with everything a label owns hanging off it: chunk, vector, reference, run."""
+    conn.execute(
+        'INSERT INTO indexed_file (repo, file_path, language, mtime, content_hash, chunk_count, indexed_at, status)'
+        " VALUES (?, ?, 'python', 1.0, 'h', 1, '2026-01-01', 'ok')",
+        (repo, path),
+    )
+    chunk_id = storage.insert_chunk(
+        conn,
+        {
+            'file_path': path,
+            'repo': repo,
+            'language': 'python',
+            'symbol_name': None,
+            'symbol_type': None,
+            'module': None,
+            'text': 'body',
+        },
+    )
+    storage.insert_chunk_embedding(conn, chunk_id, [0.1] * config.EMBEDDING_DIM)
+    conn.execute(
+        'INSERT INTO symbol_reference (source_file, source_symbol, target_symbol, target_module, ref_type)'
+        " VALUES (?, 'caller', 'callee', NULL, 'call')",
+        (path,),
+    )
+    conn.execute("INSERT INTO index_run (repo, started_at) VALUES (?, '2026-01-01')", (repo,))
+    return chunk_id
+
+
+def test_forgetting_a_label_takes_every_table_with_it(indy_dir):
+    """A renamed target leaves its old label behind, and re-indexing cannot clear it.
+
+    Re-indexing skips a file whose content_hash is unchanged, so the row keeps the label
+    it was first indexed under however many runs go past.
+    """
+    conn = storage.open_working_db()
+    stale_chunk = add_indexed_file(conn, 'notes-dev', '~/notes/dev/a.md')
+    add_indexed_file(conn, 'notes', '~/notes/b.md')
+    storage.commit_working_db(conn)
+
+    assert service.forget_repo('notes-dev') == {'files': 1, 'chunks': 1, 'runs': 1}
+
+    read = storage.get_read_db()
+    assert read.execute('SELECT COUNT(*) FROM indexed_file WHERE repo = ?', ('notes-dev',)).fetchone()[0] == 0
+    assert read.execute('SELECT COUNT(*) FROM chunk WHERE repo = ?', ('notes-dev',)).fetchone()[0] == 0
+    assert read.execute('SELECT COUNT(*) FROM index_run WHERE repo = ?', ('notes-dev',)).fetchone()[0] == 0
+    assert read.execute('SELECT COUNT(*) FROM symbol_reference WHERE source_file = ?', ('~/notes/dev/a.md',)).fetchone()[0] == 0
+    assert read.execute('SELECT COUNT(*) FROM vec_chunks WHERE rowid = ?', (stale_chunk,)).fetchone()[0] == 0
+    read.close()
+
+
+def test_forgetting_one_label_leaves_its_neighbour_whole(indy_dir):
+    """The two labels share a path prefix, which is how the stale one arose in the first place."""
+    conn = storage.open_working_db()
+    add_indexed_file(conn, 'notes-dev', '~/notes/dev/a.md')
+    kept_chunk = add_indexed_file(conn, 'notes', '~/notes/b.md')
+    storage.commit_working_db(conn)
+
+    service.forget_repo('notes-dev')
+
+    read = storage.get_read_db()
+    assert read.execute('SELECT COUNT(*) FROM indexed_file WHERE repo = ?', ('notes',)).fetchone()[0] == 1
+    assert read.execute('SELECT COUNT(*) FROM chunk WHERE repo = ?', ('notes',)).fetchone()[0] == 1
+    assert read.execute('SELECT COUNT(*) FROM index_run WHERE repo = ?', ('notes',)).fetchone()[0] == 1
+    assert read.execute('SELECT COUNT(*) FROM symbol_reference WHERE source_file = ?', ('~/notes/b.md',)).fetchone()[0] == 1
+    assert read.execute('SELECT COUNT(*) FROM vec_chunks WHERE rowid = ?', (kept_chunk,)).fetchone()[0] == 1
+    read.close()
+
+
+def test_forgetting_swaps_a_whole_index_in(indy_dir):
+    """It is a write, so it owes the same guarantee every other write does."""
+    conn = storage.open_working_db()
+    add_indexed_file(conn, 'gone', '~/gone/a.md')
+    storage.commit_working_db(conn)
+
+    service.forget_repo('gone')
+
+    assert sorted(p.name for p in indy_dir.iterdir()) == ['indy.db']
 
 
 def test_a_read_connection_cannot_write(existing_index):
