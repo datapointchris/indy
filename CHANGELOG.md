@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v0.9.1 (2026-08-12)
+
+### Bug Fixes
+
+- **index**: Prune on disk absence, not on the walk
+  ([`6526ea0`](https://github.com/datapointchris/indy/commit/6526ea0e356502f2184ffd539c8d163c954dea7c))
+
+The prune deleted rows for files the walk did not produce, which is not the same set as files that
+  are gone. Path.walk does not follow a symlink, so anything behind one is absent from the walk
+  while still being there.
+
+Caught on the first real run: ~/dev/standards became a symlink today, so re-indexing dev pruned 15
+  live standards files, and a search for them returned nothing. That is losing live content to clear
+  stale content.
+
+Disk absence is the narrow test and cannot do that. The cost is that a file newly covered by an
+  exclude pattern keeps its rows until it is really deleted, which leaves stale content instead.
+
+
 ## v0.9.0 (2026-08-12)
 
 ### Features
