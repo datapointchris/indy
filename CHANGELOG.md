@@ -1,6 +1,31 @@
 # CHANGELOG
 
 
+## v0.9.0 (2026-08-12)
+
+### Features
+
+- **index**: Prune files that no longer exist
+  ([`bf78190`](https://github.com/datapointchris/indy/commit/bf78190a487ae88e1c3fa4b8d7e128f233146f01))
+
+A file deleted or renamed between runs kept its manifest row, its chunks and its vectors, and no
+  later run could clear them: indexing only visits files that exist, so nothing revisits the path
+  that stopped existing. Search returned those chunks under a path resolving to nothing. Measured
+  before the fix: 119 rows across 7 repos, 74 of them in dotfiles alone.
+
+The walk already knows every path that should be there, so the prune is the set difference against
+  the manifest — no new table, contrary to how the item described it.
+
+Scoped to paths under the walked root rather than to the whole label, because names a target after
+  its directory and one label can have two roots. Skipped entirely when the walk finds nothing: a
+  moved root and a failed git ls-files look exactly like a target whose every file was deleted, and
+  pruning on that shape would empty the label. Leaving ghosts is the safe direction, and clears a
+  label that really did go.
+
+The count rides on the run result and prints only when it is non-zero, so the line stays quiet on
+  the runs where nothing was removed.
+
+
 ## v0.8.0 (2026-08-12)
 
 ### Features
