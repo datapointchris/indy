@@ -230,7 +230,7 @@ indy was one of the CLIs that could not say which build was running, even though
   is wired to an eager root option now, printing `indy <version>` with the commit appended when uv
   installed from a git ref.
 
-The rule and its reasoning are in `~/dev/standards/cli-design.md` § "`--version` on every CLI".
+The rule and its reasoning are in `standards/cli-design.md` § "`--version` on every CLI".
 
 Also the first CLI test in this repo, covering the two things a caller shelling out to indy relies
   on: the version line, and help plus exit 2 on a bare invocation.
