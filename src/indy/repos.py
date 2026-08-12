@@ -30,10 +30,20 @@ def load_json_file(path: Path) -> dict:
 
 
 def load_portfolio_repos() -> list[IndexTarget]:
-    """Active repos we own, from repos.json. Indexed under their bare registry name."""
+    """Active repos we own, from repos.json. Indexed under their bare registry name.
+
+    `status` is required, so a missing one is an error rather than a repo quietly
+    left out of the index. Skipping it silently is what let this reader disagree
+    with fleet about which repos exist, with neither able to say so.
+    """
+    repos = load_json_file(REPOS_FILE).get('repos', [])
+    missing = [repo.get('name', '(unnamed)') for repo in repos if 'status' not in repo]
+    if missing:
+        raise ValueError(f'{REPOS_FILE}: status is required and is missing on: {", ".join(missing)}')
+
     targets = []
-    for repo in load_json_file(REPOS_FILE).get('repos', []):
-        if repo.get('status') != 'active':
+    for repo in repos:
+        if repo['status'] != 'active':
             continue
         path = Path(repo.get('path', '')).expanduser()
         if path.exists():

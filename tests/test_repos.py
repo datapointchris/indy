@@ -59,6 +59,27 @@ def test_dormant_repos_are_not_indexed(tmp_path, monkeypatch):
     assert repos.get_owned_repo_names() == {'active'}
 
 
+def test_a_repo_with_no_status_is_rejected(tmp_path, monkeypatch):
+    """Skipping it silently is what let this reader disagree with fleet about which
+    repos exist. fleet counted a status-less entry as active, indy dropped it, and
+    both produced a plausible list with no way to notice the difference."""
+    active = tmp_path / 'active'
+    undeclared = tmp_path / 'undeclared'
+    active.mkdir()
+    undeclared.mkdir()
+    write_registries(
+        tmp_path,
+        monkeypatch,
+        portfolio=[
+            {'name': 'active', 'path': str(active), 'status': 'active'},
+            {'name': 'undeclared', 'path': str(undeclared)},
+        ],
+        exemplars=[],
+    )
+    with pytest.raises(ValueError, match='undeclared'):
+        repos.get_owned_repo_names()
+
+
 def test_missing_exemplar_file_is_not_fatal(tmp_path, monkeypatch):
     repo = tmp_path / 'example-repo'
     repo.mkdir()
