@@ -116,11 +116,17 @@ Search supports `--owned` / `--reference` to filter. Default is to search everyt
 ## What Gets Indexed
 
 A file that disappears between runs is pruned by the next index of its target, with its
-chunks and vectors. That has to be the walk's job: indexing only ever visits files that
-exist, so nothing else revisits the path that stopped existing. The prune is skipped when
-the walk finds nothing, because a moved root and a failed `git ls-files` look identical to a
-target whose every file was deleted — leaving ghosts is the safe direction, and `indy forget`
-clears a label that really did go.
+chunks and vectors. That has to happen during a run: indexing only ever visits files that
+exist, so nothing else revisits the path that stopped existing.
+
+**Gone from disk, not missing from the walk.** The two read as the same test and are not.
+`Path.walk` does not follow a symlink, so anything behind one is absent from the walk while
+still being there — `~/dev/standards` became a symlink and a walk-based prune took the whole
+of the fleet's standards out of the index on the next run. Pruning on disk absence instead
+means a file newly covered by an exclude pattern keeps its rows until it is really deleted,
+which leaves stale content rather than losing live content. The prune is also skipped
+entirely when the walk finds nothing, since an unmounted root makes every path missing at
+once. `indy forget` clears a label that really did go.
 
 Active repos from `repos_file`, exemplar clones from `exemplar_repos_file`, plus any
 `[[extra_paths]]` in config.toml. All three default to nothing outside indy's own XDG dirs —

@@ -344,7 +344,30 @@ def test_pruning_only_touches_the_root_that_was_walked(indy_dir, tmp_path):
     storage.commit_working_db(conn)
 
     conn = storage.open_working_db()
-    assert service.prune_missing_files(conn, 'shared', tmp_path / 'a', set()) == 1
+    assert service.prune_missing_files(conn, 'shared', tmp_path / 'a') == 1
     storage.commit_working_db(conn)
 
     assert {Path(p).name for p in indexed_paths()} == {'y.md'}
+
+
+def test_a_file_the_walk_never_reaches_is_not_pruned(indy_dir, tmp_path, stub_embedding):
+    """Absence from the walk is not absence from disk, and pruning on the first deletes
+    live content. Path.walk does not follow a symlink, so a symlinked subtree indexed
+    while it was a real directory vanishes on the next run. ~/dev/standards became a
+    symlink and took the fleet's standards out of the index exactly this way.
+    """
+    root = make_repo(tmp_path, **{'a.md': '# A\n\nSome prose.\n'})
+    elsewhere = tmp_path / 'elsewhere'
+    elsewhere.mkdir()
+    (elsewhere / 'linked.md').write_text('# Linked\n\nReal file, behind a symlink.\n')
+    index_once(root)
+
+    conn = storage.open_working_db()
+    add_indexed_file(conn, 'r', str(root / 'sub' / 'linked.md'))
+    storage.commit_working_db(conn)
+    (root / 'sub').symlink_to(elsewhere)
+
+    result = index_once(root)
+
+    assert result['files_pruned'] == 0
+    assert {Path(p).name for p in indexed_paths()} == {'a.md', 'linked.md'}

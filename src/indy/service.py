@@ -226,8 +226,8 @@ def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[Ind
     commit_working_db(conn)
 
 
-def prune_missing_files(conn: sqlite3.Connection, repo_name: str, root: Path, seen: set[str]) -> int:
-    """Drop manifest rows under root that this run did not walk past. Returns the count.
+def prune_missing_files(conn: sqlite3.Connection, repo_name: str, root: Path) -> int:
+    """Drop manifest rows under root whose file is gone from disk. Returns the count.
 
     A file deleted or renamed between runs leaves its row, its chunks and its vectors
     behind, and no later run can clear them: indexing only ever visits files that exist,
@@ -238,12 +238,17 @@ def prune_missing_files(conn: sqlite3.Connection, repo_name: str, root: Path, se
     can be produced by more than one root — `index --path` names a target after its
     directory — and a run that walked one of them must not delete another's rows.
 
-    A file the target's exclude patterns now cover is pruned by the same walk, which is
-    correct: it is no longer indexable, and leaving it in would mean the pattern only
-    applies to repos indexed after it was written.
+    Absence from disk, not absence from the walk. The two look equivalent and are not: a
+    walk stops at a symlinked subtree, since Path.walk does not follow one, so pruning
+    what the walk missed deletes files that are still there. `~/dev/standards` became a
+    symlink and took the fleet's standards out of the index on the next run. The cost of
+    the narrow rule is that a file newly covered by an exclude pattern keeps its rows
+    until it is deleted, which leaves stale content rather than losing live content.
     """
     prefix = compact_path(str(root)).rstrip('/')
-    stale = [path for path in get_repo_file_paths(conn, repo_name) if path not in seen and path.startswith(f'{prefix}/')]
+    stale = [
+        path for path in get_repo_file_paths(conn, repo_name) if path.startswith(f'{prefix}/') and not Path(expand_path(path)).exists()
+    ]
     for path in stale:
         delete_file_chunks(conn, path)
         delete_file_references(conn, path)
@@ -384,12 +389,12 @@ def index_into(
                 )
                 conn.commit()
 
-        # Only against a walk that found something. An empty walk over a non-empty manifest
-        # is a root that moved or a `git ls-files` that failed far more often than it is a
-        # target whose every file was deleted, and pruning on it would empty the label. The
-        # safe direction leaves ghosts, and `indy forget` clears a label that really did go.
+        # Only against a walk that found something. An unmounted or moved root makes every
+        # path missing at once, which would empty the label; a walk that found nothing is
+        # the cheap signal for that, and it costs only the case where a target's every file
+        # really was deleted. `indy forget` clears a label that really did go.
         if indexable_files:
-            files_pruned = prune_missing_files(conn, repo_name, root, {compact_path(str(f)) for f in indexable_files})
+            files_pruned = prune_missing_files(conn, repo_name, root)
 
     except Exception as exc:
         run_error = str(exc)
