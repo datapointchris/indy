@@ -5,9 +5,11 @@ key in config.toml, then a tool-owned default. No default names a directory outs
 indy's own XDG dirs — where a repo registry lives, or which loose directories are worth
 indexing, is a property of the machine and belongs in config.toml.
 
-A file indy reads but does not own takes one more rung between the config key and the
-default: a shared variable the machine declares once for every tool that reads it. See
-resolve_path's `shared_env`.
+Three rungs, and indy reads no variable that is not prefixed `INDY_`. A shared variable
+naming the registry for every tool at once used to sit between the config key and the
+default. It came out because `~/.env` does not reach a process that sources no profile,
+so the rung was empty in exactly the unattended runs it was supposed to serve, and the
+machine layer is what config.toml already is.
 """
 
 from __future__ import annotations
@@ -47,21 +49,14 @@ def resolve_path(
     key: str,
     default: Path,
     config: dict[str, Any] | None = None,
-    shared_env: str | None = None,
 ) -> Path:
-    """Resolve a path: $env_var, then the config key, then $shared_env, then the default.
+    """Resolve a path: $env_var, then the config key, then the default.
 
-    `shared_env` is for a file indy reads but does not own — the registry, which several
-    tools read from one place. It sits below the config so naming a different file for
-    indy alone still works, and above the default so an unset value is the only route to
-    indy's own directory. Only a *declared* variable belongs here: dotfiles carries
-    REPOS_JSON in install/flags.yml under `required:`, so `dotfiles check` fails while it
-    is unset rather than letting indy quietly index whatever its data directory holds.
+    Each rung answers a different question — the variable is this shell, the config is
+    this machine, the default is every machine that says nothing.
     """
     config = USER_CONFIG if config is None else config
     value = os.environ.get(env_var) or config.get(key)
-    if not value and shared_env:
-        value = os.environ.get(shared_env)
     return Path(value).expanduser() if value else default
 
 
@@ -70,7 +65,7 @@ def resolve_str(env_var: str, key: str, default: str, config: dict[str, Any] | N
     return os.environ.get(env_var) or config.get(key) or default
 
 
-def setting_source(env_var: str, key: str, config: dict[str, Any] | None = None, shared_env: str | None = None) -> str:
+def setting_source(env_var: str, key: str, config: dict[str, Any] | None = None) -> str:
     """Which layer supplied a setting.
 
     Travels with the value because the value alone does not explain itself: an index that
@@ -84,8 +79,6 @@ def setting_source(env_var: str, key: str, config: dict[str, Any] | None = None,
         return f'${env_var}'
     if config.get(key):
         return str(CONFIG_PATH)
-    if shared_env and os.environ.get(shared_env):
-        return f'${shared_env}'
     return 'default'
 
 
@@ -117,13 +110,8 @@ WORKING_DB_PATH = INDY_DIR / 'indy.db.building'
 # Registry locations default to indy-owned paths. Sharing one registry with other tools
 # is an arrangement between those tools, so it belongs in config.toml on the machines
 # that have such a file — never in the default, which every machine inherits.
-REPOS_FILE = resolve_path('INDY_REPOS_FILE', 'repos_file', CONFIG_DIR / 'repos.json', shared_env='REPOS_JSON')
-
-# No shared_env for the exemplar registry, deliberately. Only REPOS_JSON is declared, and a
-# rung naming an undeclared variable resolves to nothing and silently drops through to the
-# default — the failure this layer exists to prevent. The exemplar clones are fleet-only, so
-# the fleet-scoped config that names them is the right place for that path to live.
-EXEMPLAR_REPOS_FILE = resolve_path('INDY_EXEMPLAR_REPOS_FILE', 'exemplar_repos_file', CONFIG_DIR / 'exemplar-repos.json')
+REPOS_REGISTRY = resolve_path('INDY_REPOS_REGISTRY', 'repos_registry', CONFIG_DIR / 'repos.json')
+EXEMPLAR_REGISTRY = resolve_path('INDY_EXEMPLAR_REGISTRY', 'exemplar_registry', CONFIG_DIR / 'exemplar-repos.json')
 
 EXTRA_PATHS_RAW: list[dict[str, str]] = resolve_extra_paths()
 

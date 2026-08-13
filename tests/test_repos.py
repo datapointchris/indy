@@ -12,8 +12,8 @@ def write_registries(tmp_path, monkeypatch, portfolio, exemplars):
     exemplar_file = tmp_path / 'exemplar-repos.json'
     repos_file.write_text(json.dumps({'owner': 'test-owner', 'repos': portfolio}))
     exemplar_file.write_text(json.dumps({'repos': exemplars}))
-    monkeypatch.setattr(repos, 'REPOS_FILE', repos_file)
-    monkeypatch.setattr(repos, 'EXEMPLAR_REPOS_FILE', exemplar_file)
+    monkeypatch.setattr(repos, 'REPOS_REGISTRY', repos_file)
+    monkeypatch.setattr(repos, 'EXEMPLAR_REGISTRY', exemplar_file)
 
 
 def test_same_name_in_both_registries_stays_distinct(tmp_path, monkeypatch):
@@ -84,7 +84,7 @@ def test_missing_exemplar_file_is_not_fatal(tmp_path, monkeypatch):
     repo = tmp_path / 'example-repo'
     repo.mkdir()
     write_registries(tmp_path, monkeypatch, portfolio=[{'name': 'example-repo', 'path': str(repo), 'status': 'active'}], exemplars=[])
-    monkeypatch.setattr(repos, 'EXEMPLAR_REPOS_FILE', tmp_path / 'does-not-exist.json')
+    monkeypatch.setattr(repos, 'EXEMPLAR_REGISTRY', tmp_path / 'does-not-exist.json')
     assert repos.get_exemplar_repo_names() == set()
     assert repos.get_owned_repo_names() == {'example-repo'}
 

@@ -3,9 +3,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from pathlib import PurePosixPath
 
-from indy.config import EXEMPLAR_REPOS_FILE
+from indy.config import EXEMPLAR_REGISTRY
 from indy.config import EXTRA_PATHS_RAW
-from indy.config import REPOS_FILE
+from indy.config import REPOS_REGISTRY
 
 OWNED = 'owned'
 EXEMPLAR = 'exemplar'
@@ -36,10 +36,10 @@ def load_portfolio_repos() -> list[IndexTarget]:
     left out of the index. Skipping it silently is what let this reader disagree
     with fleet about which repos exist, with neither able to say so.
     """
-    repos = load_json_file(REPOS_FILE).get('repos', [])
+    repos = load_json_file(REPOS_REGISTRY).get('repos', [])
     missing = [repo.get('name', '(unnamed)') for repo in repos if 'status' not in repo]
     if missing:
-        raise ValueError(f'{REPOS_FILE}: status is required and is missing on: {", ".join(missing)}')
+        raise ValueError(f'{REPOS_REGISTRY}: status is required and is missing on: {", ".join(missing)}')
 
     targets = []
     for repo in repos:
@@ -59,7 +59,7 @@ def load_exemplar_repos() -> list[IndexTarget]:
     the owned and exemplar sets and merged their chunks under one label.
     """
     targets = []
-    for repo in load_json_file(EXEMPLAR_REPOS_FILE).get('repos', []):
+    for repo in load_json_file(EXEMPLAR_REGISTRY).get('repos', []):
         path = Path(repo.get('path', '')).expanduser()
         if not path.exists():
             continue

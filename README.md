@@ -42,8 +42,8 @@ create `$XDG_CONFIG_HOME/indy/config.toml` (usually `~/.config/indy/config.toml`
 ```toml
 # Repo registries. Default to indy's own config dir; name a shared path here when
 # other tools read the same registry.
-repos_file = "~/registries/repos.json"
-exemplar_repos_file = "~/registries/exemplar-repos.json"
+repos_registry = "~/registries/repos.json"
+exemplar_registry = "~/registries/exemplar-repos.json"
 
 # Where the index is written. Defaults to $XDG_DATA_HOME/indy. Point it at a synced
 # tree to index on one machine and search from all of them.
@@ -59,13 +59,13 @@ path = "~/notes"
 ```
 
 Every setting resolves as **environment variable → `config.toml` → built-in default**.
-The env vars are `INDY_DIR`, `INDY_REPOS_FILE`, `INDY_EXEMPLAR_REPOS_FILE`,
+The env vars are `INDY_DIR`, `INDY_REPOS_REGISTRY`, `INDY_EXEMPLAR_REGISTRY`,
 `INDY_EXTRA_PATHS` (JSON), `OLLAMA_HOST`, and `OLLAMA_MODEL`. `indy config` prints
 what each one resolved to and where it came from.
 
 ### Registries
 
-`repos_file` is a JSON registry of repos you own; `exemplar_repos_file` holds
+`repos_registry` is a JSON registry of repos you own; `exemplar_registry` holds
 third-party clones kept to be read as examples. They are separate files because
 an exemplar carries fields a worked-in repo has no business having, and because a
 clone often shares its bare name with a repo you own — exemplars are therefore

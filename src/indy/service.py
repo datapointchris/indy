@@ -22,13 +22,13 @@ from indy.config import CODE_EXTENSIONS
 from indy.config import CONFIG_EXTENSIONS
 from indy.config import CONFIG_PATH
 from indy.config import DOC_EXTENSIONS
-from indy.config import EXEMPLAR_REPOS_FILE
+from indy.config import EXEMPLAR_REGISTRY
 from indy.config import EXTRA_PATHS_RAW
 from indy.config import INDY_DIR
 from indy.config import MAX_FILE_SIZE_BYTES
 from indy.config import OLLAMA_HOST
 from indy.config import OLLAMA_MODEL
-from indy.config import REPOS_FILE
+from indy.config import REPOS_REGISTRY
 from indy.config import SKIP_DIRS
 from indy.config import SKIP_FILES
 from indy.config import compact_path
@@ -599,20 +599,17 @@ def get_dependencies(symbol_name: str, repo: str | None = None, direction: str =
         conn.close()
 
 
-def describe_setting(name: str, value: str, env_var: str, key: str, shared_env: str | None = None) -> dict:
+def describe_setting(name: str, value: str, env_var: str, key: str) -> dict:
     """One resolved setting: its value, the layer that supplied it, and whether it is there.
 
     `exists` is only meaningful for a path, so a non-path setting reports True rather than
     claiming a URL is missing.
-
-    `shared_env` must match what resolve_path was given for the same setting, or the source
-    names a layer the value did not come from.
     """
     is_path = value.startswith(('/', '~'))
     return {
         'name': name,
         'value': value,
-        'source': setting_source(env_var, key, shared_env=shared_env),
+        'source': setting_source(env_var, key),
         'exists': Path(value).expanduser().exists() if is_path else True,
     }
 
@@ -625,8 +622,8 @@ def describe_config() -> dict:
     """
     settings = [
         describe_setting('data_dir', str(INDY_DIR), 'INDY_DIR', 'data_dir'),
-        describe_setting('repos_file', str(REPOS_FILE), 'INDY_REPOS_FILE', 'repos_file', shared_env='REPOS_JSON'),
-        describe_setting('exemplar_repos_file', str(EXEMPLAR_REPOS_FILE), 'INDY_EXEMPLAR_REPOS_FILE', 'exemplar_repos_file'),
+        describe_setting('repos_registry', str(REPOS_REGISTRY), 'INDY_REPOS_REGISTRY', 'repos_registry'),
+        describe_setting('exemplar_registry', str(EXEMPLAR_REGISTRY), 'INDY_EXEMPLAR_REGISTRY', 'exemplar_registry'),
         describe_setting('ollama_host', OLLAMA_HOST, 'OLLAMA_HOST', 'ollama_host'),
         describe_setting('ollama_model', OLLAMA_MODEL, 'OLLAMA_MODEL', 'ollama_model'),
     ]

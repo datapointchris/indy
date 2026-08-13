@@ -17,7 +17,7 @@ chunker.py     Chunking strategies per content type:
                - Config (yaml/toml/json): whole-file if small, code-split if large
                - Other code: recursive character splitter
 repos.py       Reads both registries and returns IndexTarget records (name, path, kind,
-               exclude). repos_file = the portfolio; exemplar_repos_file = third-party
+               exclude). repos_registry = the portfolio; exemplar_registry = third-party
                clones kept as code exemplars. Also owns is_excluded().
 config.py      XDG base dirs, config.toml loading, and constants. Every setting resolves
                environment variable → config.toml → built-in default.
@@ -101,7 +101,7 @@ Ollama must be running before any index or search operation. Start with `ollama 
 
 ## Two Registries
 
-`repos_file` holds the portfolio — repos we work in. `exemplar_repos_file` holds third-party
+`repos_registry` holds the portfolio — repos we work in. `exemplar_registry` holds third-party
 clones kept to be *read* as examples of specific patterns; each entry carries `exemplary_for`
 (what it demonstrates) and `index_exclude` (subtrees to keep out of the index). They are
 separate files because the two answer different questions and need different fields.
@@ -128,7 +128,7 @@ which leaves stale content rather than losing live content. The prune is also sk
 entirely when the walk finds nothing, since an unmounted root makes every path missing at
 once. `indy forget` clears a label that really did go.
 
-Active repos from `repos_file`, exemplar clones from `exemplar_repos_file`, plus any
+Active repos from `repos_registry`, exemplar clones from `exemplar_registry`, plus any
 `[[extra_paths]]` in config.toml. All three default to nothing outside indy's own XDG dirs —
 a default that names a particular machine's layout is the bug this arrangement exists to
 prevent, and it is why no directory of personal notes appears anywhere in this repo.

@@ -10,66 +10,51 @@ def test_defaults_name_no_path_outside_indys_own_dirs(monkeypatch):
     asserting on the module constants instead would just re-read whatever config file
     the machine running the tests happens to have.
     """
-    for env_var in ('INDY_DIR', 'INDY_REPOS_FILE', 'INDY_EXEMPLAR_REPOS_FILE'):
+    for env_var in ('INDY_DIR', 'INDY_REPOS_REGISTRY', 'INDY_EXEMPLAR_REGISTRY'):
         monkeypatch.delenv(env_var, raising=False)
 
     data_dir = config.resolve_path('INDY_DIR', 'data_dir', config.DATA_HOME / 'indy', {})
-    repos_file = config.resolve_path('INDY_REPOS_FILE', 'repos_file', config.CONFIG_DIR / 'repos.json', {})
-    exemplars = config.resolve_path('INDY_EXEMPLAR_REPOS_FILE', 'exemplar_repos_file', config.CONFIG_DIR / 'exemplar-repos.json', {})
+    repos = config.resolve_path('INDY_REPOS_REGISTRY', 'repos_registry', config.CONFIG_DIR / 'repos.json', {})
+    exemplars = config.resolve_path('INDY_EXEMPLAR_REGISTRY', 'exemplar_registry', config.CONFIG_DIR / 'exemplar-repos.json', {})
 
     assert data_dir == config.DATA_HOME / 'indy'
-    assert repos_file.parent == config.CONFIG_DIR
+    assert repos.parent == config.CONFIG_DIR
     assert exemplars.parent == config.CONFIG_DIR
 
 
 def test_config_file_supplies_a_path(tmp_path, monkeypatch):
-    monkeypatch.delenv('INDY_REPOS_FILE', raising=False)
-    resolved = config.resolve_path('INDY_REPOS_FILE', 'repos_file', tmp_path / 'default.json', {'repos_file': '~/shared/repos.json'})
+    monkeypatch.delenv('INDY_REPOS_REGISTRY', raising=False)
+    resolved = config.resolve_path(
+        'INDY_REPOS_REGISTRY', 'repos_registry', tmp_path / 'default.json', {'repos_registry': '~/shared/repos.json'}
+    )
     assert resolved == Path.home() / 'shared' / 'repos.json'
 
 
 def test_env_var_beats_the_config_file(tmp_path, monkeypatch):
-    monkeypatch.setenv('INDY_REPOS_FILE', str(tmp_path / 'from-env.json'))
-    resolved = config.resolve_path('INDY_REPOS_FILE', 'repos_file', tmp_path / 'default.json', {'repos_file': '~/from-config.json'})
+    monkeypatch.setenv('INDY_REPOS_REGISTRY', str(tmp_path / 'from-env.json'))
+    resolved = config.resolve_path(
+        'INDY_REPOS_REGISTRY', 'repos_registry', tmp_path / 'default.json', {'repos_registry': '~/from-config.json'}
+    )
     assert resolved == tmp_path / 'from-env.json'
 
 
 def test_default_applies_when_neither_layer_names_one(tmp_path, monkeypatch):
-    monkeypatch.delenv('INDY_REPOS_FILE', raising=False)
-    monkeypatch.delenv('REPOS_JSON', raising=False)
-    assert config.resolve_path('INDY_REPOS_FILE', 'repos_file', tmp_path / 'default.json', {}) == tmp_path / 'default.json'
+    monkeypatch.delenv('INDY_REPOS_REGISTRY', raising=False)
+    assert config.resolve_path('INDY_REPOS_REGISTRY', 'repos_registry', tmp_path / 'default.json', {}) == tmp_path / 'default.json'
 
 
-def test_the_shared_variable_answers_when_nothing_else_does(tmp_path, monkeypatch):
-    """The registry is read from one place by several tools, so the machine declares it once."""
-    monkeypatch.delenv('INDY_REPOS_FILE', raising=False)
+def test_an_unprefixed_variable_is_never_consulted(tmp_path, monkeypatch):
+    """indy reads no variable it does not own, so the machine layer is config.toml alone.
+
+    A shared `REPOS_JSON` rung used to sit between the config key and the default. It came
+    out because `~/.env` does not reach a process that sources no profile, which made the
+    rung empty in exactly the unattended runs it was meant to serve.
+    """
+    monkeypatch.delenv('INDY_REPOS_REGISTRY', raising=False)
     monkeypatch.setenv('REPOS_JSON', str(tmp_path / 'declared.json'))
-    resolved = config.resolve_path('INDY_REPOS_FILE', 'repos_file', tmp_path / 'default.json', {}, shared_env='REPOS_JSON')
-    assert resolved == tmp_path / 'declared.json'
 
-
-def test_the_config_file_beats_the_shared_variable(tmp_path, monkeypatch):
-    """Naming a different registry for indy alone has to keep working."""
-    monkeypatch.delenv('INDY_REPOS_FILE', raising=False)
-    monkeypatch.setenv('REPOS_JSON', str(tmp_path / 'declared.json'))
-    resolved = config.resolve_path(
-        'INDY_REPOS_FILE', 'repos_file', tmp_path / 'default.json', {'repos_file': '~/from-config.json'}, shared_env='REPOS_JSON'
-    )
-    assert resolved == Path.home() / 'from-config.json'
-
-
-def test_the_shared_variable_is_ignored_when_not_asked_for(tmp_path, monkeypatch):
-    """A setting indy owns must not pick up a registry path that happens to be exported."""
-    monkeypatch.delenv('INDY_DIR', raising=False)
-    monkeypatch.setenv('REPOS_JSON', str(tmp_path / 'declared.json'))
-    assert config.resolve_path('INDY_DIR', 'data_dir', tmp_path / 'own', {}) == tmp_path / 'own'
-
-
-def test_setting_source_names_the_shared_variable(tmp_path, monkeypatch):
-    monkeypatch.delenv('INDY_REPOS_FILE', raising=False)
-    monkeypatch.setenv('REPOS_JSON', str(tmp_path / 'declared.json'))
-    assert config.setting_source('INDY_REPOS_FILE', 'repos_file', {}, shared_env='REPOS_JSON') == '$REPOS_JSON'
-    assert config.setting_source('INDY_REPOS_FILE', 'repos_file', {}) == 'default'
+    assert config.resolve_path('INDY_REPOS_REGISTRY', 'repos_registry', tmp_path / 'default.json', {}) == tmp_path / 'default.json'
+    assert config.setting_source('INDY_REPOS_REGISTRY', 'repos_registry', {}) == 'default'
 
 
 def test_extra_paths_default_to_none(monkeypatch):
@@ -97,15 +82,15 @@ def test_missing_config_file_is_not_fatal(tmp_path):
 
 def test_config_file_is_parsed(tmp_path):
     config_file = tmp_path / 'config.toml'
-    config_file.write_text('repos_file = "~/dev/repos.json"\n\n[[extra_paths]]\nname = "notes"\npath = "~/notes"\n')
+    config_file.write_text('repos_registry = "~/dev/repos.json"\n\n[[extra_paths]]\nname = "notes"\npath = "~/notes"\n')
     parsed = config.load_user_config(config_file)
-    assert parsed['repos_file'] == '~/dev/repos.json'
+    assert parsed['repos_registry'] == '~/dev/repos.json'
     assert parsed['extra_paths'] == [{'name': 'notes', 'path': '~/notes'}]
 
 
 def test_setting_source_names_the_layer(monkeypatch):
-    monkeypatch.delenv('INDY_REPOS_FILE', raising=False)
-    assert config.setting_source('INDY_REPOS_FILE', 'repos_file', {}) == 'default'
-    assert config.setting_source('INDY_REPOS_FILE', 'repos_file', {'repos_file': '~/x.json'}) == str(config.CONFIG_PATH)
-    monkeypatch.setenv('INDY_REPOS_FILE', '/tmp/x.json')
-    assert config.setting_source('INDY_REPOS_FILE', 'repos_file', {'repos_file': '~/x.json'}) == '$INDY_REPOS_FILE'
+    monkeypatch.delenv('INDY_REPOS_REGISTRY', raising=False)
+    assert config.setting_source('INDY_REPOS_REGISTRY', 'repos_registry', {}) == 'default'
+    assert config.setting_source('INDY_REPOS_REGISTRY', 'repos_registry', {'repos_registry': '~/x.json'}) == str(config.CONFIG_PATH)
+    monkeypatch.setenv('INDY_REPOS_REGISTRY', '/tmp/x.json')
+    assert config.setting_source('INDY_REPOS_REGISTRY', 'repos_registry', {'repos_registry': '~/x.json'}) == '$INDY_REPOS_REGISTRY'
