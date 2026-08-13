@@ -5,11 +5,15 @@ key in config.toml, then a tool-owned default. No default names a directory outs
 indy's own XDG dirs — where a repo registry lives, or which loose directories are worth
 indexing, is a property of the machine and belongs in config.toml.
 
-Three rungs, and indy reads no variable that is not prefixed `INDY_`. A shared variable
-naming the registry for every tool at once used to sit between the config key and the
-default. It came out because `~/.env` does not reach a process that sources no profile,
+Three rungs, and no path indy resolves is named by a variable indy does not own. A shared
+variable naming the registry for every tool at once used to sit between the config key and
+the default. It came out because `~/.env` does not reach a process that sources no profile,
 so the rung was empty in exactly the unattended runs it was supposed to serve, and the
 machine layer is what config.toml already is.
+
+OLLAMA_HOST and OLLAMA_MODEL are the two unprefixed names left, and they stay. Those are
+ollama's own published variables rather than this fleet's vocabulary, so reading them is
+interoperating with the service, not accepting a path from somewhere indy cannot see.
 """
 
 from __future__ import annotations
