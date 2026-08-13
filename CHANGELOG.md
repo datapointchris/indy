@@ -1,6 +1,31 @@
 # CHANGELOG
 
 
+## v1.0.1 (2026-08-13)
+
+### Bug Fixes
+
+- **config**: Refuse a key indy does not read
+  ([`6aaba75`](https://github.com/datapointchris/indy/commit/6aaba753f338dbfc5789107fe9788f13b3a81818))
+
+config.toml parsed into a dict and every reader called .get on it, so a key indy no longer reads was
+  dropped in silence and the resolver fell through to a default. That is the shape a rename hides
+  in.
+
+Measured 2026-08-13 on this fleet: exemplar_repos_file sat in the deployed config after the key
+  became exemplar_registry. indy read the file, dropped the key, resolved its own config directory
+  and found nothing there — which reads exactly like a machine that never declared an exemplar
+  registry.
+
+Absent stays fine. A machine keeping everything where indy expects it should not have to hold a file
+  saying so, and erroring there would break exactly that machine. Present and wrong is now an error,
+  and the two were the same answer until this.
+
+The key set is declared rather than derived from the resolve_* calls, because those run at import —
+  a list built from them could not be checked before the first one had already answered. A test
+  asserts the guard fails closed, so a real key left out of it cannot pass unnoticed.
+
+
 ## v1.0.0 (2026-08-13)
 
 ### Documentation
