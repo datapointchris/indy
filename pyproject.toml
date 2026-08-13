@@ -1,6 +1,6 @@
 [project]
 name = "indy"
-version = "0.10.0"
+version = "1.0.0"
 description = "Semantic search index for local codebases, docs, and notes"
 authors = [{ name = "Chris Birch", email = "datapointchris@gmail.com" }]
 license = { text = "MIT" }

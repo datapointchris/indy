@@ -1,6 +1,43 @@
 # CHANGELOG
 
 
+## v1.0.0 (2026-08-13)
+
+### Documentation
+
+- **config**: Scope the prefix rule to paths indy resolves
+  ([`1e58600`](https://github.com/datapointchris/indy/commit/1e5860047b435d7e8c2dc6f4b1d4ae1209ece5ef))
+
+The module docstring said indy reads no variable without an INDY_ prefix. OLLAMA_HOST and
+  OLLAMA_MODEL are counterexamples sitting eleven lines below it.
+
+They stay. Those are ollama's own published names, so reading them is interoperating with a service
+  rather than accepting a path from a layer indy cannot see, which is what the rule exists to stop.
+
+### Features
+
+- Resolve registries in three rungs, all INDY-prefixed
+  ([`92a1945`](https://github.com/datapointchris/indy/commit/92a1945afa64c4a1a3e5d94f6cf38cf8b4b51cf0))
+
+indy read REPOS_JSON between the config key and its default. That variable is set in ~/.env, which a
+  process sourcing no profile never reads, so the rung was empty in exactly the unattended runs it
+  existed to serve. config.toml is already the machine layer and reaches every process, so the rung
+  is gone rather than moved.
+
+The remaining names say who owns them. A tool reading a variable it did not name is how one fleet's
+  vocabulary ends up compiled into a generic tool.
+
+BREAKING CHANGE: repos_file is now repos_registry and exemplar_repos_file is exemplar_registry;
+  $INDY_REPOS_FILE is $INDY_REPOS_REGISTRY and $INDY_EXEMPLAR_REPOS_FILE is $INDY_EXEMPLAR_REGISTRY.
+  $REPOS_JSON is no longer consulted, so a machine relying on it must name the path in config.toml.
+
+### Breaking Changes
+
+- Repos_file is now repos_registry and exemplar_repos_file is exemplar_registry; $INDY_REPOS_FILE is
+  $INDY_REPOS_REGISTRY and $INDY_EXEMPLAR_REPOS_FILE is $INDY_EXEMPLAR_REGISTRY. $REPOS_JSON is no
+  longer consulted, so a machine relying on it must name the path in config.toml.
+
+
 ## v0.10.0 (2026-08-12)
 
 ### Features
