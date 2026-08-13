@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from indy import config
 
 
@@ -94,3 +96,23 @@ def test_setting_source_names_the_layer(monkeypatch):
     assert config.setting_source('INDY_REPOS_REGISTRY', 'repos_registry', {'repos_registry': '~/x.json'}) == str(config.CONFIG_PATH)
     monkeypatch.setenv('INDY_REPOS_REGISTRY', '/tmp/x.json')
     assert config.setting_source('INDY_REPOS_REGISTRY', 'repos_registry', {'repos_registry': '~/x.json'}) == '$INDY_REPOS_REGISTRY'
+
+
+def test_a_key_indy_does_not_read_is_refused(tmp_path):
+    """Measured 2026-08-13: `exemplar_repos_file` sat in the deployed config after the key
+    became `exemplar_registry`. indy read the file, dropped the key, resolved its own config
+    directory and found nothing — indistinguishable from a machine that declared no exemplar
+    registry at all."""
+    config_file = tmp_path / 'config.toml'
+    config_file.write_text('exemplar_repos_file = "~/dev/exemplar-repos.json"\n')
+    with pytest.raises(config.ConfigError) as exc:
+        config.load_user_config(config_file)
+    assert 'exemplar_repos_file' in str(exc.value)
+
+
+def test_every_key_indy_reads_is_accepted(tmp_path):
+    """The guard fails closed, so a real key left out of KNOWN_KEYS would break a valid config."""
+    config_file = tmp_path / 'config.toml'
+    body = '\n'.join(f'{key} = "x"' for key in sorted(config.KNOWN_KEYS - {'extra_paths'}))
+    config_file.write_text(body + '\n\n[[extra_paths]]\nname = "n"\npath = "~/n"\n')
+    assert sorted(config.load_user_config(config_file)) == sorted(config.KNOWN_KEYS)

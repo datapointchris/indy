@@ -37,12 +37,46 @@ CONFIG_DIR = CONFIG_HOME / 'indy'
 CONFIG_PATH = CONFIG_DIR / 'config.toml'
 
 
+# Every key config.toml may carry. Declared rather than derived from the resolve_* calls
+# below, because those run at import and a list built from them could not be checked before
+# the first one had already answered.
+KNOWN_KEYS = frozenset(
+    {
+        'data_dir',
+        'repos_registry',
+        'exemplar_registry',
+        'extra_paths',
+        'ollama_host',
+        'ollama_model',
+    }
+)
+
+
+class ConfigError(Exception):
+    """A config.toml that exists and cannot be honoured."""
+
+
 def load_user_config(path: Path | None = None) -> dict[str, Any]:
-    """Parse config.toml, tolerating its absence — indy runs on defaults alone."""
+    """Parse config.toml, tolerating its absence — indy runs on defaults alone.
+
+    Absent is not an error: a machine keeping everything where indy expects it should not
+    have to hold a file saying so. Present and carrying a key indy does not read is, because
+    the two used to be the same answer and that is how a rename hides.
+
+    Measured 2026-08-13 on this fleet: `exemplar_repos_file` sat in the deployed config after
+    the key became `exemplar_registry`. indy read the file, dropped the key, resolved its own
+    config directory, and found nothing there — which reads exactly like a machine that never
+    declared an exemplar registry at all.
+    """
     path = CONFIG_PATH if path is None else path
     if not path.exists():
         return {}
-    return tomllib.loads(path.read_text())
+    parsed = tomllib.loads(path.read_text())
+    unknown = sorted(set(parsed) - KNOWN_KEYS)
+    if unknown:
+        known = ', '.join(sorted(KNOWN_KEYS))
+        raise ConfigError(f'{path}: unknown key(s) {", ".join(unknown)}; known: {known}')
+    return parsed
 
 
 USER_CONFIG = load_user_config()
