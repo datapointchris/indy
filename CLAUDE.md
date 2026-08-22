@@ -29,7 +29,7 @@ main.py        CLI entry points only — thin Typer shells calling service.py.
 
 ## Storage
 
-Three tables + one virtual table in `$XDG_DATA_HOME/indy/indy.db` (SQLite, WAL mode):
+`$XDG_DATA_HOME/indy/indy.db` (SQLite, WAL mode), whose tables are:
 
 ```yaml
 indexed_file      Manifest: one row per file. Tracks mtime, sha256 hash, chunk count, status.
