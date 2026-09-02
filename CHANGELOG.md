@@ -1,6 +1,93 @@
 # CHANGELOG
 
 
+## v1.1.0 (2026-09-02)
+
+### Chores
+
+- Sync the generated configs to toolchain 18
+  ([`5bbecfe`](https://github.com/datapointchris/indy/commit/5bbecfe27ed3c7b3c693ae586076188966a8879b))
+
+Both stamped files come from the fleet's version declaration: the pre-commit config and the
+  generated workflow. Nothing here is a repo decision.
+
+Stamp 18 carries the refcheck hook at v0.6.0, a codespell exclude widened to go.mod, and — on a
+  private repo — runs-on naming the self-hosted pool with the actionlint config that declares the
+  label.
+
+- Sync the generated configs to toolchain 19
+  ([`d75893f`](https://github.com/datapointchris/indy/commit/d75893f8efff4a83e688d3df3d4fb526d70001f8))
+
+Both stamped files come from the fleet's version declaration: the pre-commit config and the
+  generated workflow. Nothing here is a repo decision.
+
+Stamp 19 passes --allow-parallel-runners to golangci-lint. A repo with two Go components runs two
+  Lint jobs at once, and on a single self-hosted box the second one dies on the shared cache lock
+  before linting anything.
+
+- **precommit**: Drop the commit-branding hook
+  ([`c89989f`](https://github.com/datapointchris/indy/commit/c89989ff85ba8d21afd8ef587f901303c25348c9))
+
+Claude Code suppresses its own commit and PR attribution through its attribution setting, which
+  resolves an empty string to no trailer at all. A hook that strips the trailer afterwards has
+  nothing left to remove.
+
+- **pyproject**: Raise assertion verbosity instead of test verbosity
+  ([`d0f3e2a`](https://github.com/datapointchris/indy/commit/d0f3e2a672356cfe98c2b1ead6a6663288d1e4f3))
+
+A failing assertion truncated its diff and printed "use -vv to show", so the reader re-ran the whole
+  suite to see it. addopts = "-vv" answered that by raising test-list verbosity as well, which is a
+  different question: a green run printed a line per test and said nothing. verbosity_assertions
+  raises only the half that was wanted.
+
+Written by the forge pyproject die.
+
+### Continuous Integration
+
+- Regenerate validate.yml at toolchain 16
+  ([`29349fc`](https://github.com/datapointchris/indy/commit/29349fc80cc9540945966aaf061cd40281d5d5fb))
+
+Catches this repo up with the version manifest: StyLua pinned to a release rather than latest, a
+  reworded bats discovery note, and double quotes in the node block. Only the blocks this repo
+  declares are affected.
+
+Triggers and job structure are unchanged.
+
+### Documentation
+
+- Drop the table count, which was three and is four
+  ([`c9c0e2f`](https://github.com/datapointchris/indy/commit/c9c0e2f822a5b82cb1bea2f28beb37c6a1266a84))
+
+indexed_file, index_run, chunk and symbol_reference, plus the vec_chunks virtual table. The yaml
+  block directly beneath already listed all five.
+
+### Features
+
+- **reads**: State how far behind the index is on every read
+  ([`2b4a9d1`](https://github.com/datapointchris/indy/commit/2b4a9d1fec3c96998c46d11917389118d46cad3c))
+
+A miss reads as an absence. `No symbol named 'Boundary' found` is the same sentence whether the
+  symbol does not exist or was written after the last scan, and indexing is manual, so the second is
+  routine — a symbol committed twenty minutes ago is missing, and a symbol that moved file still
+  answers from where it was. The tool was accurate up to a boundary and silent about where the
+  boundary was.
+
+search, symbol and deps now close with the age of the index over the repos the read could reach,
+  printed on a hit as well as a miss, and `--json` carries the same thing as a freshness object.
+  status reports it too.
+
+The number is the oldest scan in scope, not the newest. Indexing one repo makes the newest scan
+  minutes old while every other label stays where it was, so a read quoting the newest calls itself
+  current at exactly the moment it is most likely to be answering out of date. Dated from index_run:
+  a file whose content hash is unchanged is skipped and keeps its old indexed_at, so the manifest
+  dates the last change to a repo rather than the last look at it.
+
+Age alone, with no count of files changed since. Counting them needs a walk of every target with
+  gitignore semantics, which is a subprocess per repo on a read that has to stay cheap, and a
+  stat-only approximation cannot see a new file — it would report zero changes for the case the line
+  exists to catch.
+
+
 ## v1.0.1 (2026-08-13)
 
 ### Bug Fixes
