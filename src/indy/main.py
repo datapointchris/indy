@@ -177,6 +177,9 @@ def index(
         target = get_target_by_name(repo)
         if target is None:
             console.print(f'[red]No repo named {repo!r}.[/red]')
+            advice = advise_on_a_path(repo)
+            if advice:
+                console.print(f'  {advice}')
             for suggestion in suggest_target_names(repo):
                 console.print(f'  did you mean [bold]{suggestion}[/bold]?')
             raise typer.Exit(2)
@@ -262,6 +265,23 @@ def suggest_target_names(name: str) -> list[str]:
     names = [target.name for target in all_index_targets()]
     qualified = [candidate for candidate in names if candidate.rpartition('/')[2] == name]
     return qualified or difflib.get_close_matches(name, names, n=3, cutoff=0.6)
+
+
+def advise_on_a_path(name: str) -> str | None:
+    """The route back for a directory typed where a target name goes, or None.
+
+    A directory a registry already covers has a name, and that name is the answer rather
+    than `--path`: indexing the same tree by path labels it after its directory and leaves
+    it in the index twice under two labels. Anything else on disk is what `--path` is for.
+    """
+    root = Path(name).expanduser()
+    if not root.is_dir():
+        return None
+    resolved = root.resolve()
+    for target in all_index_targets():
+        if target.path.resolve() == resolved:
+            return f'that path is [bold]{target.name}[/bold] — run [bold]indy index {target.name}[/bold]'
+    return f'to index a path, run [bold]indy index --path {name}[/bold]'
 
 
 def format_counts(done: int, total: int) -> str:

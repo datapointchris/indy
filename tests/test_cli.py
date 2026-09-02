@@ -1,10 +1,14 @@
 """The machine contract: what a caller shelling out to indy can rely on."""
 
+from pathlib import Path
+
 import pytest
 from typer.testing import CliRunner
 
+from indy import main
 from indy import service
 from indy.main import indy_app
+from indy.repos import IndexTarget
 
 runner = CliRunner()
 
@@ -41,3 +45,37 @@ def test_an_unknown_label_never_reaches_the_index(monkeypatch):
     monkeypatch.setattr(service, 'forget_repo', lambda *a, **k: pytest.fail('opened a session for a typo'))
 
     assert runner.invoke(indy_app, ['forget', 'nope']).exit_code == 2
+
+
+def test_a_directory_the_registry_covers_is_answered_with_its_name(tmp_path, monkeypatch):
+    """`indy index ~/repo` names the problem; the fix is the label the registry gave it."""
+    monkeypatch.setattr(main, 'all_index_targets', lambda: [IndexTarget(name='dotfiles', path=tmp_path, kind='owned')])
+    monkeypatch.setattr(main, 'get_target_by_name', lambda name: None)
+
+    result = runner.invoke(indy_app, ['index', str(tmp_path)])
+
+    assert result.exit_code == 2
+    assert 'indy index dotfiles' in result.output
+
+
+def test_a_directory_no_registry_covers_is_answered_with_the_flag(tmp_path, monkeypatch):
+    """Nothing owns it, so the argument was right and the form was wrong."""
+    monkeypatch.setattr(main, 'all_index_targets', lambda: [])
+    monkeypatch.setattr(main, 'get_target_by_name', lambda name: None)
+
+    result = runner.invoke(indy_app, ['index', str(tmp_path)])
+
+    assert result.exit_code == 2
+    assert '--path' in result.output
+
+
+def test_a_name_that_is_not_a_directory_still_gets_the_near_misses(monkeypatch):
+    """A typo is not a path, and the advice for one must not crowd out the other."""
+    monkeypatch.setattr(main, 'all_index_targets', lambda: [IndexTarget(name='dotfiles', path=Path('/nowhere'), kind='owned')])
+    monkeypatch.setattr(main, 'get_target_by_name', lambda name: None)
+
+    result = runner.invoke(indy_app, ['index', 'dotfile'])
+
+    assert result.exit_code == 2
+    assert 'did you mean' in result.output
+    assert '--path' not in result.output
