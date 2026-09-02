@@ -85,6 +85,8 @@ def status(
     repo_label = f'(across {stats["repo_count"]} repos)' if stats['repo_count'] else ''
     console.print(f'[bold]Files indexed:[/bold] {stats["total_files"]}  {repo_label}')
     console.print(f'[bold]Total chunks:[/bold]  {stats["total_chunks"]}')
+    if stats['freshness']:
+        console.print(f'[dim]{describe_freshness(stats["freshness"])}[/dim]')
 
     recent = stats.get('recent_runs', [])
     if recent:
@@ -282,6 +284,40 @@ def format_elapsed(seconds: float) -> str:
     return f'{minutes}m {secs:.1f}s'
 
 
+def format_age(seconds: float) -> str:
+    """A duration at one unit — the precision a caveat about staleness is read at."""
+    for size, unit in ((86400, 'day'), (3600, 'hour'), (60, 'minute')):
+        if seconds >= size:
+            count = int(seconds // size)
+            return f'{count} {unit}' if count == 1 else f'{count} {unit}s'
+    return 'under a minute'
+
+
+def describe_freshness(freshness: dict) -> str:
+    """One sentence bounding the age of everything the read could have matched."""
+    oldest = format_age(freshness['oldest']['age_seconds'])
+    newest = format_age(freshness['newest']['age_seconds'])
+    if freshness['repos'] == 1:
+        return f'Index: {freshness["oldest"]["repo"]} scanned {oldest} ago.'
+    if oldest == newest:
+        return f'Index: {freshness["repos"]} repos, all scanned {oldest} ago.'
+    return f'Index: {freshness["repos"]} repos, scanned between {newest} and {oldest} ago.'
+
+
+def print_freshness(repo: str | None = None, owned: bool | None = None) -> None:
+    """State how far behind the index is, so a miss is never read as an absence.
+
+    Printed whether or not anything matched, and whether or not the index is old. A caveat
+    that appears only past some threshold teaches the reader to take its absence for
+    currency, which is the reading that made a stale answer indistinguishable from a true
+    one in the first place.
+    """
+    freshness = service.index_freshness(repo=repo, owned=owned)
+    if freshness is None:
+        return
+    console.print(f'[dim]{describe_freshness(freshness)}[/dim]')
+
+
 def print_index_result(result: dict) -> None:
     status_str = f'[red]error: {result["error"]}[/red]' if result['error'] else '[green]ok[/green]'
     # Pruning is silent when there was nothing to prune, which is almost every run. A
@@ -363,12 +399,11 @@ def search(
     if as_json:
         for r in results:
             r['score'] = round(1 - r.pop('distance'), 4)
-        print_json({'results': results})
+        print_json({'results': results, 'freshness': service.index_freshness(repo=repo, owned=ownership)})
         return
 
     if not results:
         console.print('No results.')
-        return
 
     for i, r in enumerate(results, 1):
         score = 1 - r['distance']  # convert distance to similarity
@@ -378,6 +413,8 @@ def search(
         console.print(f'   {snippet}')
         if len(r['text']) > 300:
             console.print('   …')
+
+    print_freshness(repo=repo, owned=ownership)
 
 
 @indy_app.command('symbol')
@@ -389,12 +426,11 @@ def symbol(
     """Exact symbol lookup by function or class name — precise alternative to semantic search."""
     results = service.search_symbol(name, repo=repo)
     if as_json:
-        print_json({'results': results})
+        print_json({'results': results, 'freshness': service.index_freshness(repo=repo)})
         return
 
     if not results:
         console.print(f'No symbol named {name!r} found.')
-        return
 
     for i, r in enumerate(results, 1):
         kind = f'{r["symbol_type"]} ' if r.get('symbol_type') else ''
@@ -403,6 +439,8 @@ def symbol(
         console.print(f'   {snippet}')
         if len(r['text']) > 300:
             console.print('   …')
+
+    print_freshness(repo=repo)
 
 
 @indy_app.command('deps')
@@ -419,29 +457,30 @@ def deps(
 
     result = service.get_dependencies(symbol_name, repo=repo, direction=direction)
     if as_json:
-        print_json(result)
+        print_json({**result, 'freshness': service.index_freshness(repo=repo)})
         return
 
     callers = result.get('callers', [])
     callees = result.get('callees', [])
     if not callers and not callees:
         console.print(f'No references found for {symbol_name!r}. (Reference graph is Python-only.)')
-        return
+    else:
+        if 'callers' in result:
+            console.print(f'\n[bold]Callers of {symbol_name}[/bold] ({len(callers)})')
+            if not callers:
+                console.print('  (none)')
+            for c in callers:
+                console.print(f'  [cyan]{c["source_symbol"] or "?"}[/cyan] — {c["source_file"]}')
 
-    if 'callers' in result:
-        console.print(f'\n[bold]Callers of {symbol_name}[/bold] ({len(callers)})')
-        if not callers:
-            console.print('  (none)')
-        for c in callers:
-            console.print(f'  [cyan]{c["source_symbol"] or "?"}[/cyan] — {c["source_file"]}')
+        if 'callees' in result:
+            console.print(f'\n[bold]Callees of {symbol_name}[/bold] ({len(callees)})')
+            if not callees:
+                console.print('  (none)')
+            for c in callees:
+                module_prefix = f'{c["target_module"]}.' if c.get('target_module') else ''
+                console.print(f'  [cyan]{module_prefix}{c["target_symbol"]}[/cyan] — {c["source_file"]}')
 
-    if 'callees' in result:
-        console.print(f'\n[bold]Callees of {symbol_name}[/bold] ({len(callees)})')
-        if not callees:
-            console.print('  (none)')
-        for c in callees:
-            module_prefix = f'{c["target_module"]}.' if c.get('target_module') else ''
-            console.print(f'  [cyan]{module_prefix}{c["target_symbol"]}[/cyan] — {c["source_file"]}')
+    print_freshness(repo=repo)
 
 
 @indy_app.command('stats')

@@ -165,6 +165,16 @@ ships 14 doc translations, so `docs/*/**` then `!docs/en/**` keeps the 154 Engli
 - **Ownership resolved at service layer, not storage** — service.py resolves `--owned`/`--reference`
   into a set of repo names and passes it to storage as a generic filter. Storage knows nothing
   about ownership.
+- **Every read states the index's horizon, and states the oldest scan in scope** — a miss is
+  otherwise the same sentence whether a symbol does not exist or was written after the last
+  scan. The oldest is the bound every result satisfies; the newest describes only the last
+  repo someone indexed, so a read quoting it calls itself current at the moment it is most
+  likely to be answering out of date. Dated from `index_run` rather than
+  `indexed_file.indexed_at`, which moves only when a file's content changes.
+- **Age, and no count of files changed since** — counting them needs a walk of every target
+  with gitignore semantics, which is a subprocess per repo on a read that must stay cheap. A
+  stat-only approximation is worse than none: it cannot see a *new* file, so it would report
+  zero changes for exactly the case the freshness line exists to catch.
 - **No default names a path outside indy's own XDG dirs** — where a registry lives and which loose
   directories are worth indexing are properties of a machine, so they are config.toml keys, not
   constants. A default naming someone's layout is both wrong for everyone else and a way for

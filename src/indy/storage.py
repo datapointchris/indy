@@ -380,6 +380,28 @@ def get_recent_runs(conn: sqlite3.Connection, limit: int = 5) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def get_last_scans(conn: sqlite3.Connection) -> dict[str, str]:
+    """When each repo label was last scanned clean, as ISO timestamps.
+
+    Taken from index_run rather than indexed_file.indexed_at, which dates something else: a
+    file whose content hash is unchanged is skipped and keeps the timestamp of the run that
+    embedded it, so the manifest says when a repo last *changed*. How far behind a read is
+    depends on when the repo was last *looked at*, which is a run.
+
+    Runs carrying an error are left out. One that blew up wrote nothing, so dating the index
+    from the attempt would claim content the run never produced.
+    """
+    rows = conn.execute(
+        """
+        SELECT repo, MAX(finished_at) AS finished_at
+        FROM index_run
+        WHERE finished_at IS NOT NULL AND error IS NULL
+        GROUP BY repo
+        """
+    ).fetchall()
+    return {row['repo']: row['finished_at'] for row in rows}
+
+
 def get_repo_scan_history(conn: sqlite3.Connection, repo: str, limit: int = 20) -> list[dict]:
     """Return scan history for a specific repo, oldest first (for charting)."""
     rows = conn.execute(

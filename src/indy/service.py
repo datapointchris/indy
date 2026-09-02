@@ -52,6 +52,7 @@ from indy.storage import get_error_files
 from indy.storage import get_index_stats
 from indy.storage import get_indexed_file
 from indy.storage import get_indexed_repos
+from indy.storage import get_last_scans
 from indy.storage import get_read_db
 from indy.storage import get_recent_runs
 from indy.storage import get_repo_file_paths
@@ -499,10 +500,54 @@ def search_symbol(name: str, repo: str | None = None) -> list[dict]:
         conn.close()
 
 
+def summarize_freshness(last_scans: dict[str, str], scope: set[str] | None = None) -> dict | None:
+    """Bound the age of everything a read can reach: the oldest scan in scope, and the newest.
+
+    The oldest is the number that answers "can I trust a miss", and reporting only the newest
+    hides it. Indexing one repo makes the newest scan minutes old while every other label
+    stays where it was, so a read quoting the newest calls itself current at exactly the
+    moment it is most likely to be answering out of date. The oldest is the bound every
+    result in scope actually satisfies.
+
+    None when nothing in scope has been scanned, which is the whole of a fresh install.
+    """
+    in_scope = {repo: scanned for repo, scanned in last_scans.items() if scope is None or repo in scope}
+    if not in_scope:
+        return None
+
+    now = datetime.now(UTC)
+
+    def describe(repo: str) -> dict:
+        return {'repo': repo, 'scanned_at': in_scope[repo], 'age_seconds': (now - datetime.fromisoformat(in_scope[repo])).total_seconds()}
+
+    return {
+        'repos': len(in_scope),
+        'oldest': describe(min(in_scope, key=lambda repo: in_scope[repo])),
+        'newest': describe(max(in_scope, key=lambda repo: in_scope[repo])),
+    }
+
+
+def index_freshness(repo: str | None = None, owned: bool | None = None) -> dict | None:
+    """How far behind the index is over the repos one read could match.
+
+    Scoped by the read's own filters, so the answer describes what was searched rather than
+    the whole database. A repo the index has never held is outside every scope: this
+    measures the index, and a target that was never indexed is a gap in coverage rather than
+    an age.
+    """
+    scope = {repo} if repo else resolve_ownership_filter(owned)
+    conn = get_read_db()
+    try:
+        return summarize_freshness(get_last_scans(conn), scope)
+    finally:
+        conn.close()
+
+
 def get_status() -> dict:
     conn = get_read_db()
     try:
         stats = get_index_stats(conn)
+        stats['freshness'] = summarize_freshness(get_last_scans(conn))
         stats['recent_runs'] = get_recent_runs(conn, limit=5)
         if stats['error_files']:
             stats['error_file_details'] = expand_result_paths(get_error_files(conn))

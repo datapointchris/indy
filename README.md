@@ -34,6 +34,13 @@ indy repos                      # list indexed repos with chunk counts
 indy update                     # reinstall latest from GitHub
 ```
 
+`search`, `symbol` and `deps` each close with how far behind the index is, and `--json`
+carries the same thing as a `freshness` object. Indexing is manual, so a symbol written
+today is absent from an index scanned last week and a flat "no symbol named X" cannot be
+told from one that does not exist. The number quoted is the *oldest* scan the read could
+have matched, not the newest: indexing one repo makes the newest minutes old while every
+other label stays where it was.
+
 ## Configuration
 
 indy runs on defaults alone. To point it at a repo registry or extra directories,
