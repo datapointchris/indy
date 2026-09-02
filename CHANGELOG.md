@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.1.1 (2026-09-02)
+
+### Bug Fixes
+
+- **index**: Answer a path typed as a target name with the form that works
+  ([`36f7c40`](https://github.com/datapointchris/indy/commit/36f7c408976448d8f62b35a3c3dddfc6559dc975))
+
+`indy index ~/dotfiles` reported `No repo named '/home/chris/dotfiles'`, which names the problem and
+  not the fix. The argument is a name and the path form is `--path`, and neither the message nor the
+  near-miss suggestions said so — a path shares no prefix with any registered name, so difflib had
+  nothing to offer.
+
+A directory a registry already covers is answered with its label rather than with `--path`: indexing
+  the same tree by path labels it after its directory and leaves it in the index twice, under two
+  names that both look right.
+
+
 ## v1.1.0 (2026-09-02)
 
 ### Chores
