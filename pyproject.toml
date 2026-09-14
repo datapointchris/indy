@@ -10,7 +10,10 @@ dependencies = [
     "typer>=0.15.0",
     "rich>=13.0.0",
     "sqlite-vec>=0.1",
-    "httpx>=0.27.0",
+    # httpx's successor rather than a typosquat of it: same author, developed at
+    # pydantic/httpx2 under BSD-3. The name alone reads as one, which is why it is
+    # said here.
+    "httpx2>=2.9.1",
     "pyselfupdate[typer]>=0.2.2",
     "tree-sitter>=0.21",
     "tree-sitter-go>=0.25.0",

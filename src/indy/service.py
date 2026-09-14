@@ -13,7 +13,7 @@ from datetime import UTC
 from datetime import datetime
 from pathlib import Path
 
-import httpx
+import httpx2
 
 from indy.chunker import chunk_file
 from indy.chunker import detect_language
@@ -92,7 +92,7 @@ ProgressCallback = Callable[[IndexProgress], None]
 
 
 def embed_text(text: str) -> list[float]:
-    response = httpx.post(
+    response = httpx2.post(
         f'{OLLAMA_HOST}/api/embed',
         json={'model': OLLAMA_MODEL, 'input': text},
         timeout=30.0,
