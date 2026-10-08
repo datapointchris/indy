@@ -6,10 +6,8 @@ days between runs. The guarantee here is that the horizon is always on the page 
 on a hit, and whether the index is minutes or months old.
 """
 
+import datetime as dt
 import json
-from datetime import UTC
-from datetime import datetime
-from datetime import timedelta
 
 import pytest
 from typer.testing import CliRunner
@@ -27,7 +25,7 @@ INSERT_CHUNK = (
 
 
 def ago(**delta) -> str:
-    return (datetime.now(UTC) - timedelta(**delta)).isoformat()
+    return (dt.datetime.now(dt.UTC) - dt.timedelta(**delta)).isoformat()
 
 
 def add_run(conn, repo: str, finished_at: str, error: str | None = None) -> None:

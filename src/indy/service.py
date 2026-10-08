@@ -1,6 +1,7 @@
 """All meaningful operations: indexing, searching, status.
 The CLI is a thin wrapper around these functions."""
 
+import datetime as dt
 import hashlib
 import sqlite3
 import subprocess
@@ -9,8 +10,6 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
 from dataclasses import dataclass
-from datetime import UTC
-from datetime import datetime
 from pathlib import Path
 
 import httpx2
@@ -272,7 +271,7 @@ def index_into(
     """
     indexable_files = collect_indexable_files(root, exclude)
     total_files = len(indexable_files)
-    now = datetime.now(UTC).isoformat()
+    now = dt.datetime.now(dt.UTC).isoformat()
     run_id = start_index_run(conn, repo_name, now)
 
     files_scanned = 0
@@ -366,7 +365,7 @@ def index_into(
                         'mtime': mtime,
                         'content_hash': content_hash,
                         'chunk_count': file_chunks_added,
-                        'indexed_at': datetime.now(UTC).isoformat(),
+                        'indexed_at': dt.datetime.now(dt.UTC).isoformat(),
                         'status': 'ok',
                     },
                 )
@@ -384,7 +383,7 @@ def index_into(
                         'mtime': filepath.stat().st_mtime if filepath.exists() else 0.0,
                         'content_hash': '',
                         'chunk_count': 0,
-                        'indexed_at': datetime.now(UTC).isoformat(),
+                        'indexed_at': dt.datetime.now(dt.UTC).isoformat(),
                         'status': f'error: {exc}',
                     },
                 )
@@ -406,7 +405,7 @@ def index_into(
             conn,
             run_id,
             {
-                'finished_at': datetime.now(UTC).isoformat(),
+                'finished_at': dt.datetime.now(dt.UTC).isoformat(),
                 'files_scanned': files_scanned,
                 'files_updated': files_updated,
                 'chunks_added': chunks_added,
@@ -515,10 +514,14 @@ def summarize_freshness(last_scans: dict[str, str], scope: set[str] | None = Non
     if not in_scope:
         return None
 
-    now = datetime.now(UTC)
+    now = dt.datetime.now(dt.UTC)
 
     def describe(repo: str) -> dict:
-        return {'repo': repo, 'scanned_at': in_scope[repo], 'age_seconds': (now - datetime.fromisoformat(in_scope[repo])).total_seconds()}
+        return {
+            'repo': repo,
+            'scanned_at': in_scope[repo],
+            'age_seconds': (now - dt.datetime.fromisoformat(in_scope[repo])).total_seconds(),
+        }
 
     return {
         'repos': len(in_scope),
