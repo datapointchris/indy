@@ -169,8 +169,9 @@ commit_message = "build(release): {version}"
 # The package name is hardcoded on purpose. python-semantic-release sets no
 # $PACKAGE_NAME, so `uv lock --upgrade-package "$PACKAGE_NAME"` silently no-ops
 # and ships a stale lock file in the release commit.
-build_command = """
-    pip install uv
+# Reads the uv-lock hook's rev, the one uv release every uv.lock writer runs.
+build_command = '''
+    pip install "uv==$(python -c 'import re; print(re.search(r"uv-pre-commit\s+rev: \"?([\w.]+)", open(".pre-commit-config.yaml").read())[1])')"
     uv lock --upgrade-package indy
     git add uv.lock
-"""
+'''
