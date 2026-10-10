@@ -28,6 +28,17 @@ def test_bare_invocation_shows_help_rather_than_doing_anything():
     assert 'Usage:' in result.output
 
 
+def test_config_is_a_namespace_and_show_is_the_read():
+    """Bare `config` lists its verbs and exits 2, so a second verb has somewhere to go."""
+    bare = runner.invoke(indy_app, ['config'])
+    assert bare.exit_code == 2
+    assert 'show' in bare.output
+
+    shown = runner.invoke(indy_app, ['config', 'show', '--json'])
+    assert shown.exit_code == 0
+    assert '"settings"' in shown.stdout
+
+
 def test_forgetting_an_unknown_label_is_a_usage_error(monkeypatch):
     """Exit 2, so a typo is distinguishable from a label that was there and failed to go."""
     monkeypatch.setattr(service, 'indexed_repo_names', lambda: ['notes'])

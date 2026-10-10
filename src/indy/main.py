@@ -594,8 +594,12 @@ def repos(
     console.print(table)
 
 
-@indy_app.command('config')
-def config(
+config_app = typer.Typer(name='config', no_args_is_help=True, help='Inspect the resolved settings.')
+indy_app.add_typer(config_app)
+
+
+@config_app.command('show')
+def config_show(
     as_json: bool = typer.Option(False, '--json', help='Output as JSON to stdout.'),
 ):
     """Show resolved settings and which layer supplied each one."""

@@ -121,4 +121,4 @@ ships 14 doc translations, so `docs/*/**` then `!docs/en/**` keeps the 154 Engli
   file, so it would report zero for exactly the case the freshness line exists to catch.
 - **Settings resolve env var → config.toml → default, and report which layer won** — an index that
   searches nothing is almost always a config file that was never read rather than a wrong path, so
-  `indy config` prints the source next to the value.
+  `indy config show` prints the source next to the value.

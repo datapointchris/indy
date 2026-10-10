@@ -23,7 +23,7 @@ indy search "query" --reference # only third-party exemplar clones
 indy search "query" --json      # machine-readable JSON output
 indy symbol get_db              # exact symbol lookup by function/class name
 indy deps get_db                # reference graph: callers + callees of a symbol
-indy config                     # resolved settings and which layer supplied each
+indy config show                # resolved settings and which layer supplied each
 indy status                     # index health: file counts, last run
 indy errors                     # per-file error listing grouped by repo
 indy errors-clear               # remove error records (re-attempted on next index)
@@ -67,7 +67,7 @@ path = "~/notes"
 
 Every setting resolves as **environment variable → `config.toml` → built-in default**.
 The env vars are `INDY_DIR`, `INDY_REPOS_REGISTRY`, `INDY_EXEMPLAR_REGISTRY`,
-`INDY_EXTRA_PATHS` (JSON), `OLLAMA_HOST`, and `OLLAMA_MODEL`. `indy config` prints
+`INDY_EXTRA_PATHS` (JSON), `OLLAMA_HOST`, and `OLLAMA_MODEL`. `indy config show` prints
 what each one resolved to and where it came from.
 
 ### Registries
