@@ -20,6 +20,7 @@ dependencies = [
     "tree-sitter-go>=0.25.0",
     "tree-sitter-typescript>=0.23.2",
     "tree-sitter-rust>=0.24.2",
+    "tree-sitter-lua>=0.5.0",
 ]
 
 [project.urls]

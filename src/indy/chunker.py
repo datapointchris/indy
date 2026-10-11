@@ -4,6 +4,7 @@ from pathlib import Path
 
 try:
     import tree_sitter_go as _tsgo
+    import tree_sitter_lua as _tslua
     import tree_sitter_rust as _tsrust
     import tree_sitter_typescript as _tsts
     from tree_sitter import Language as _Language
@@ -11,6 +12,7 @@ try:
 
     _TS_LANGUAGES: dict[str, _Language] = {
         'go': _Language(_tsgo.language()),
+        'lua': _Language(_tslua.language()),
         'rust': _Language(_tsrust.language()),
         'typescript': _Language(_tsts.language_typescript()),
         'tsx': _Language(_tsts.language_tsx()),
@@ -34,11 +36,28 @@ LANGUAGE_MAP = {
     '.py': 'python',
     '.go': 'go',
     '.js': 'javascript',
+    '.mjs': 'javascript',
+    '.cjs': 'javascript',
     '.ts': 'typescript',
+    '.mts': 'typescript',
+    '.cts': 'typescript',
     '.tsx': 'typescript',
+    '.vue': 'vue',
+    '.astro': 'astro',
+    '.html': 'html',
+    '.css': 'css',
+    '.scss': 'scss',
     '.sh': 'bash',
+    '.bash': 'bash',
+    '.zsh': 'zsh',
+    '.bats': 'bash',
     '.rs': 'rust',
     '.rb': 'ruby',
+    '.lua': 'lua',
+    '.tf': 'terraform',
+    '.tfvars': 'terraform',
+    '.hcl': 'hcl',
+    '.sql': 'sql',
     '.md': 'markdown',
     '.rst': 'rst',
     '.txt': 'text',
@@ -69,19 +88,43 @@ class Reference:
     ref_type: str  # "call" | "import" | "inherit"
 
 
-def detect_language(file_path: str) -> str | None:
-    return LANGUAGE_MAP.get(Path(file_path).suffix.lower())
+FILENAME_LANGUAGES = {'Dockerfile': 'dockerfile'}
+
+# Keyed by the program a shebang runs, with any version suffix dropped. `uv` is
+# here because `#!/usr/bin/env -S uv run --script` is how an inline-dependency
+# Python script starts.
+SHEBANG_LANGUAGES = {'sh': 'bash', 'bash': 'bash', 'zsh': 'zsh', 'python': 'python', 'uv': 'python'}
 
 
-_TS_EXTENSIONS = {'.go', '.ts', '.tsx', '.rs'}
+def shebang_language(first_line: str) -> str | None:
+    """The language a `#!` line runs, reaching past `env` and its flags to the program."""
+    if not first_line.startswith('#!'):
+        return None
+    words = first_line[2:].split()
+    if words and Path(words[0]).name == 'env':
+        words = [word for word in words[1:] if not word.startswith('-') and '=' not in word]
+    if not words:
+        return None
+    return SHEBANG_LANGUAGES.get(Path(words[0]).name.rstrip('0123456789.'))
+
+
+def detect_language(file_path: str, content: str) -> str | None:
+    """By suffix, else by a name like `Dockerfile`, else by a suffix-less script's shebang."""
+    path = Path(file_path)
+    if path.suffix:
+        return LANGUAGE_MAP.get(path.suffix.lower())
+    return FILENAME_LANGUAGES.get(path.name) or shebang_language(content.partition('\n')[0])
+
+
+_TS_EXTENSIONS = {'.go', '.ts', '.mts', '.cts', '.tsx', '.rs', '.lua'}
 
 
 def chunk_file(file_path: str, content: str, repo: str) -> list[Chunk]:
     """Dispatch to the appropriate chunking strategy based on file extension."""
-    language = detect_language(file_path)
+    language = detect_language(file_path, content)
     ext = Path(file_path).suffix.lower()
 
-    if ext == '.py':
+    if language == 'python':
         return chunk_python(file_path, content, repo)
     elif ext in _TS_EXTENSIONS:
         return chunk_treesitter(file_path, content, repo, language)
@@ -345,6 +388,9 @@ _TS_EXTRACT_TYPES: dict[str, set[str]] = {
     'typescript': {'function_declaration', 'method_definition'},
     'tsx': {'function_declaration', 'method_definition'},
     'rust': {'function_item'},
+    # `local function f`, `function M.f` and `function M:f`. A function assigned
+    # as a value, `M.f = function() end`, has no name to chunk it under.
+    'lua': {'function_declaration'},
 }
 
 _TS_SYMBOL_TYPE_MAP: dict[str, str] = {
@@ -397,7 +443,7 @@ def ts_walk(
 
 
 def chunk_treesitter(file_path: str, content: str, repo: str, language: str | None) -> list[Chunk]:
-    """AST chunking via tree-sitter for Go, TypeScript, and Rust.
+    """AST chunking via tree-sitter for Go, TypeScript, Rust, and Lua.
     Falls back to recursive code splitter if tree-sitter packages are not installed."""
     # .tsx files share the 'typescript' language label but need the tsx grammar
     lang_key = 'tsx' if file_path.endswith('.tsx') else language

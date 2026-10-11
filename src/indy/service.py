@@ -17,7 +17,9 @@ import httpx2
 from indy.chunker import chunk_file
 from indy.chunker import detect_language
 from indy.chunker import extract_references
+from indy.chunker import shebang_language
 from indy.config import CODE_EXTENSIONS
+from indy.config import CODE_FILENAMES
 from indy.config import CONFIG_EXTENSIONS
 from indy.config import CONFIG_PATH
 from indy.config import DOC_EXTENSIONS
@@ -105,8 +107,23 @@ def embed_text(text: str) -> list[float]:
     return response.json()['embeddings'][0]
 
 
+def read_first_line(path: Path) -> str:
+    """As much of a file's opening line as a shebang occupies, or nothing for one that cannot be read."""
+    try:
+        with path.open('rb') as handle:
+            return handle.readline(256).decode('utf-8', errors='ignore')
+    except OSError:
+        return ''
+
+
 def should_index(path: Path) -> bool:
-    return path.suffix.lower() in _INDEXABLE_EXTENSIONS and path.name not in SKIP_FILES and path.stat().st_size <= MAX_FILE_SIZE_BYTES
+    if path.name in SKIP_FILES:
+        return False
+    if path.suffix:
+        wanted = path.suffix.lower() in _INDEXABLE_EXTENSIONS
+    else:
+        wanted = path.name in CODE_FILENAMES or shebang_language(read_first_line(path)) is not None
+    return wanted and path.stat().st_size <= MAX_FILE_SIZE_BYTES
 
 
 def compute_content_hash(content: str) -> str:
@@ -319,13 +336,14 @@ def index_into(
         for filepath in pending:
             report(filepath.name)
             db_path = compact_path(str(filepath))
+            content = ''
 
             try:
                 content = filepath.read_text(encoding='utf-8', errors='ignore')
                 mtime = filepath.stat().st_mtime
                 content_hash = compute_content_hash(content)
 
-                language = detect_language(str(filepath))
+                language = detect_language(str(filepath), content)
                 chunks = chunk_file(db_path, content, repo_name)
 
                 if not chunks:
@@ -379,7 +397,7 @@ def index_into(
                     {
                         'repo': repo_name,
                         'file_path': db_path,
-                        'language': detect_language(str(filepath)),
+                        'language': detect_language(str(filepath), content),
                         'mtime': filepath.stat().st_mtime if filepath.exists() else 0.0,
                         'content_hash': '',
                         'chunk_count': 0,

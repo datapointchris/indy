@@ -371,3 +371,18 @@ def test_a_file_the_walk_never_reaches_is_not_pruned(indy_dir, tmp_path, stub_em
 
     assert result['files_pruned'] == 0
     assert {Path(p).name for p in indexed_paths()} == {'a.md', 'linked.md'}
+
+
+def test_a_suffix_less_file_is_indexed_by_its_name_or_its_shebang(tmp_path):
+    root = make_repo(
+        tmp_path,
+        **{
+            'deploy': '#!/usr/bin/env bash\necho deploy\n',
+            'Dockerfile': 'FROM debian\n',
+            'serve': '#!/usr/bin/env node\nconsole.log(1)\n',
+            'LICENSE': 'MIT License\n',
+            'main.tf': 'resource "null_resource" "x" {}\n',
+            '.terraform.lock.hcl': 'provider "registry.terraform.io/hashicorp/null" {}\n',
+        },
+    )
+    assert {path.name for path in service.collect_indexable_files(root)} == {'deploy', 'Dockerfile', 'main.tf'}

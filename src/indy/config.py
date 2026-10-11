@@ -159,10 +159,38 @@ EMBEDDING_DIM = 768  # nomic-embed-text output dimension
 
 # Files to skip regardless of extension
 SKIP_DIRS = {'.git', 'node_modules', '__pycache__', '.venv', 'venv', 'dist', 'build', '.mypy_cache', '.ruff_cache', '.pytest_cache'}
-SKIP_FILES = {'uv.lock', 'package-lock.json', 'yarn.lock', 'Cargo.lock', 'go.sum'}
+SKIP_FILES = {'uv.lock', 'package-lock.json', 'yarn.lock', 'Cargo.lock', 'go.sum', '.terraform.lock.hcl'}
 
 # Extensions to index
-CODE_EXTENSIONS = {'.py', '.go', '.js', '.ts', '.tsx', '.sh', '.rs', '.rb'}
+CODE_EXTENSIONS = {
+    '.py',
+    '.go',
+    '.js',
+    '.mjs',
+    '.cjs',
+    '.ts',
+    '.mts',
+    '.cts',
+    '.tsx',
+    '.vue',
+    '.astro',
+    '.html',
+    '.css',
+    '.scss',
+    '.sh',
+    '.bash',
+    '.zsh',
+    '.bats',
+    '.rs',
+    '.rb',
+    '.lua',
+    '.tf',
+    '.tfvars',
+    '.hcl',
+    '.sql',
+}
+# Code whose name carries no suffix. A suffix-less script is indexed by its shebang instead.
+CODE_FILENAMES = {'Dockerfile'}
 DOC_EXTENSIONS = {'.md', '.rst', '.txt'}
 CONFIG_EXTENSIONS = {'.yaml', '.yml', '.toml', '.json'}
 

@@ -106,17 +106,25 @@ indexes the English pages and drops the near-duplicates of them.
 
 ## What gets indexed
 
-Code (`.py .go .js .ts .tsx .sh .rs .rb`), prose (`.md .rst .txt`), and config
-(`.yaml .yml .toml .json`). Always skipped: `.git/ node_modules/ __pycache__ .venv/
-dist/ build/`, `*.lock` files, and anything over 500 KB. In a git repo `.gitignore`
-is respected via `git ls-files`; other paths fall back to a directory walk.
+Code in Python, Go, Rust, Ruby, Lua, shell and bats, JavaScript and TypeScript,
+Vue and Astro with their HTML, CSS and SCSS, Terraform, SQL, and `Dockerfile`; prose
+(`.md .rst .txt`); and config (`.yaml .yml .toml .json`). The exact suffixes and names
+are `CODE_EXTENSIONS`, `CODE_FILENAMES`, `DOC_EXTENSIONS` and `CONFIG_EXTENSIONS` in
+`src/indy/config.py`.
+
+A file with no suffix is indexed when its first line is a shebang running `sh`, `bash`,
+`zsh`, Python, or `uv run`. Only that line is read to decide.
+
+Always skipped: `.git/ node_modules/ __pycache__ .venv/ dist/ build/`, lock files, and
+anything over 500 KB. In a git repo `.gitignore` is respected via `git ls-files`; other
+paths fall back to a directory walk.
 
 ## Architecture
 
 ```yaml
 storage.py     SQLite manifest (indexed_file, index_run, symbol_reference) + sqlite-vec vectors
 service.py     All logic: index_path, search, search_symbol, refresh, get_dependencies
-chunker.py     Python AST chunking + tree-sitter (Go/TS/Rust) + prose/code splitters
+chunker.py     Python AST chunking + tree-sitter (Go/TS/Rust/Lua) + prose/code splitters
                + Python reference extraction (call graph)
 repos.py       Reads both registries, returns index targets with resolved paths.
                Resolves ownership (owned vs reference) from which registry a repo came from.

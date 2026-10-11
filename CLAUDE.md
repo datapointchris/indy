@@ -106,7 +106,7 @@ ships 14 doc translations, so `docs/*/**` then `!docs/en/**` keeps the 154 Engli
   filter by repo/language in Python.
 - **No git post-commit hook** — an on-demand `indy index`, scheduled or run by hand, covers the
   use case. Per-repo hook management adds maintenance overhead for marginal gain.
-- **symbol_reference is Python-only** — tree-sitter already parses Go/TS/Rust for chunking;
+- **symbol_reference is Python-only** — tree-sitter already parses Go/TS/Rust/Lua for chunking;
   reference extraction for those languages is deferred. Python AST covers the primary use case.
 - **Ownership resolved at service layer, not storage** — service.py resolves `--owned`/`--reference`
   into a set of repo names and passes it to storage as a generic filter. Storage knows nothing

@@ -1,7 +1,52 @@
 import json
 
+import pytest
+
+from indy.chunker import FILENAME_LANGUAGES
+from indy.chunker import LANGUAGE_MAP
 from indy.chunker import chunk_config
+from indy.chunker import chunk_file
+from indy.chunker import shebang_language
+from indy.config import CODE_EXTENSIONS
+from indy.config import CODE_FILENAMES
+from indy.config import CONFIG_EXTENSIONS
+from indy.config import DOC_EXTENSIONS
 from indy.config import WHOLE_FILE_MAX_CHARS
+
+
+def test_every_indexed_suffix_and_name_has_a_language():
+    """A file selected for indexing with no entry here is stored with no language, and `--language` never finds it."""
+    assert set(LANGUAGE_MAP) == CODE_EXTENSIONS | DOC_EXTENSIONS | CONFIG_EXTENSIONS
+    assert set(FILENAME_LANGUAGES) == CODE_FILENAMES
+
+
+@pytest.mark.parametrize(
+    ('line', 'language'),
+    [
+        ('#!/usr/bin/env bash\n', 'bash'),
+        ('#!/bin/bash -e\n', 'bash'),
+        ('#!/bin/sh\n', 'bash'),
+        ('#!/usr/bin/env python3\n', 'python'),
+        ('#!/usr/bin/python3.13\n', 'python'),
+        ('#!/usr/bin/env -S uv run --script\n', 'python'),
+        ('#!/usr/bin/env node\n', None),
+        ('# not a shebang\n', None),
+        ('', None),
+    ],
+)
+def test_shebang_names_the_language_past_env_and_its_flags(line, language):
+    assert shebang_language(line) == language
+
+
+def test_a_suffix_less_python_script_is_chunked_by_its_functions():
+    chunks = chunk_file('bin/tool', '#!/usr/bin/env python3\ndef main():\n    return 1\n', 'r')
+    assert [(chunk.symbol_name, chunk.language) for chunk in chunks] == [('main', 'python')]
+
+
+def test_lua_is_chunked_by_its_named_functions():
+    content = 'local M = {}\nlocal function helper(x)\n  return x\nend\nfunction M.setup(opts)\n  M.opts = opts\nend\nreturn M\n'
+    chunks = chunk_file('lua/plugin/init.lua', content, 'r')
+    assert [(chunk.symbol_name, chunk.language) for chunk in chunks] == [('helper', 'lua'), ('M.setup', 'lua')]
 
 
 def test_single_line_json_is_split_rather_than_kept_whole():
