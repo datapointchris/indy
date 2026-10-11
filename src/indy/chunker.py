@@ -658,11 +658,22 @@ class ReferenceExtractor(ast.NodeVisitor):
             self._record(node.id, None, 'reference')
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
-        """`config.DB_PATH` is a reference to `DB_PATH` hinted `config`, and `config` gets no row of its own."""
+        """`config.DB_PATH` is a reference to `DB_PATH` hinted `config`, and `config` gets no row of its own.
+
+        A local receiver is hinted only where its class is known: `self.label` by `self`, and
+        `provider.label` by the class `provider` is annotated with. That reaches a property and
+        a bound method passed as a callback. Any other local is skipped as data.
+        """
         if not isinstance(node.value, ast.Name):
             self.visit(node.value)
-        elif isinstance(node.ctx, ast.Load) and node.value.id not in self._local_names[-1]:
-            self._record(node.attr, node.value.id, 'reference')
+            return
+        if not isinstance(node.ctx, ast.Load):
+            return
+        receiver = node.value.id
+        if receiver not in self._local_names[-1] or receiver in ('self', 'cls'):
+            self._record(node.attr, receiver, 'reference')
+        elif receiver in self._parameter_classes[-1]:
+            self._record(node.attr, self._parameter_classes[-1][receiver], 'reference')
 
 
 def extract_references(file_path: str, content: str) -> list[Reference]:

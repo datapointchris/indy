@@ -1,7 +1,10 @@
+import hashlib
 import json
+from dataclasses import astuple
 
 import pytest
 
+from indy.chunker import EXTRACTOR_VERSION
 from indy.chunker import FILENAME_LANGUAGES
 from indy.chunker import LANGUAGE_MAP
 from indy.chunker import chunk_config
@@ -108,6 +111,36 @@ def test_module_level_code_is_attributed_to_its_assignment_target():
     }
 
 
-def test_an_inherit_row_names_the_subclass():
-    refs = extract_references('m.py', 'class Base:\n    pass\n\n\nclass Child(Base):\n    pass\n')
-    assert [(ref.source_symbol, ref.target_symbol) for ref in refs if ref.ref_type == 'inherit'] == [('Child', 'Base')]
+EVERY_VISITOR = """\
+import os
+from pkg import steps as stages
+
+
+@register(kind='class')
+class Child(base.Base, metaclass=Meta):
+    LIMIT: Annotated[int, bound()] = os.cpu_count()
+
+    @property
+    def label(self) -> Annotated[str, doc()]:
+        return self.name
+
+    async def run(self, provider: 'Provider | None', retries=default()):
+        provider.install(self.label)
+        callback = lambda event: handle(event, provider.timeout)
+        return stages.apply(callback, self.store.load())
+
+
+TABLE = {'run': Child.run, 'other': [helper, config.DEFAULT]}
+TABLE[key()] = lambda: helper()
+"""
+
+
+def test_changing_what_the_extractor_records_needs_a_new_extractor_version():
+    """An unchanged file is re-extracted only when EXTRACTOR_VERSION moves.
+
+    Output that changes under one version leaves every unchanged file on the old rows, and
+    nothing reports it. On failure, bump EXTRACTOR_VERSION and pin the new digest beside it.
+    """
+    rows = sorted(repr(astuple(ref)) for ref in extract_references('m.py', EVERY_VISITOR))
+    digest = hashlib.sha256('\n'.join(rows).encode()).hexdigest()[:16]
+    assert (EXTRACTOR_VERSION, digest) == (1, 'd6969948fa68dc6f')
