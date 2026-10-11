@@ -5,27 +5,27 @@ from functools import partial
 from pathlib import Path
 
 try:
-    import tree_sitter_go as _tsgo
-    import tree_sitter_lua as _tslua
-    import tree_sitter_rust as _tsrust
-    import tree_sitter_typescript as _tsts
-    from tree_sitter import Language as _Language
-    from tree_sitter import Node as _Node
-    from tree_sitter import Parser as _Parser
+    import tree_sitter_go
+    import tree_sitter_lua
+    import tree_sitter_rust
+    import tree_sitter_typescript
+    from tree_sitter import Language
+    from tree_sitter import Node
+    from tree_sitter import Parser
 
     # Each entry builds a parser, so no tree-sitter name is read outside this branch.
-    _TS_PARSERS: dict[str, Callable[[], _Parser]] = {
-        'go': partial(_Parser, _Language(_tsgo.language())),
-        'lua': partial(_Parser, _Language(_tslua.language())),
-        'rust': partial(_Parser, _Language(_tsrust.language())),
-        'typescript': partial(_Parser, _Language(_tsts.language_typescript())),
-        'tsx': partial(_Parser, _Language(_tsts.language_tsx())),
+    TS_PARSERS: dict[str, Callable[[], Parser]] = {
+        'go': partial(Parser, Language(tree_sitter_go.language())),
+        'lua': partial(Parser, Language(tree_sitter_lua.language())),
+        'rust': partial(Parser, Language(tree_sitter_rust.language())),
+        'typescript': partial(Parser, Language(tree_sitter_typescript.language_typescript())),
+        'tsx': partial(Parser, Language(tree_sitter_typescript.language_tsx())),
     }
 except ImportError:
     # An empty table is the whole fallback: every lookup misses and sends the
     # file to chunk_code. A separate availability flag cannot narrow the names
     # this branch leaves unbound, which is how the NameError hid here.
-    _TS_PARSERS = {}
+    TS_PARSERS = {}
 
 from indy.config import CODE_CHUNK_OVERLAP
 from indy.config import CODE_CHUNK_SIZE
@@ -120,7 +120,7 @@ def detect_language(file_path: str, content: str) -> str | None:
     return FILENAME_LANGUAGES.get(path.name) or shebang_language(content.partition('\n')[0])
 
 
-_TS_EXTENSIONS = {'.go', '.ts', '.mts', '.cts', '.tsx', '.rs', '.lua'}
+TS_EXTENSIONS = {'.go', '.ts', '.mts', '.cts', '.tsx', '.rs', '.lua'}
 
 
 def chunk_file(file_path: str, content: str, repo: str) -> list[Chunk]:
@@ -130,7 +130,7 @@ def chunk_file(file_path: str, content: str, repo: str) -> list[Chunk]:
 
     if language == 'python':
         return chunk_python(file_path, content, repo)
-    elif ext in _TS_EXTENSIONS:
+    elif ext in TS_EXTENSIONS:
         return chunk_treesitter(file_path, content, repo, language)
     elif ext in DOC_EXTENSIONS:
         return chunk_prose(file_path, content, repo, language)
@@ -303,8 +303,8 @@ def chunk_python(file_path: str, content: str, repo: str) -> list[Chunk]:
 
 # ── Recursive character splitter ─────────────────────────────────────────────
 
-_CODE_DELIMITERS = ['\n\nfunc ', '\n\ndef ', '\nclass ', '\n\n', '\n', ' ']
-_PROSE_DELIMITERS = ['\n## ', '\n### ', '\n#### ', '\n\n', '\n']
+CODE_DELIMITERS = ['\n\nfunc ', '\n\ndef ', '\nclass ', '\n\n', '\n', ' ']
+PROSE_DELIMITERS = ['\n## ', '\n### ', '\n#### ', '\n\n', '\n']
 
 
 def recursive_split(text: str, chunk_size: int, overlap: int, delimiters: list[str]) -> list[str]:
@@ -358,13 +358,13 @@ def recursive_split(text: str, chunk_size: int, overlap: int, delimiters: list[s
 
 def chunk_code(file_path: str, content: str, repo: str, language: str | None = None) -> list[Chunk]:
     """Recursive character splitter for non-Python code files."""
-    pieces = recursive_split(content, CODE_CHUNK_SIZE, CODE_CHUNK_OVERLAP, _CODE_DELIMITERS)
+    pieces = recursive_split(content, CODE_CHUNK_SIZE, CODE_CHUNK_OVERLAP, CODE_DELIMITERS)
     return [Chunk(text=piece, file_path=file_path, repo=repo, language=language, symbol_type='prose') for piece in pieces]
 
 
 def chunk_prose(file_path: str, content: str, repo: str, language: str | None) -> list[Chunk]:
     """Paragraph-aware chunker for Markdown and plain text."""
-    pieces = recursive_split(content, PROSE_CHUNK_SIZE, PROSE_CHUNK_OVERLAP, _PROSE_DELIMITERS)
+    pieces = recursive_split(content, PROSE_CHUNK_SIZE, PROSE_CHUNK_OVERLAP, PROSE_DELIMITERS)
     return [Chunk(text=piece, file_path=file_path, repo=repo, language=language, symbol_type='prose') for piece in pieces]
 
 
@@ -387,7 +387,7 @@ def chunk_config(file_path: str, content: str, repo: str, language: str | None) 
 
 # Node types that become individual chunks. When a match is found, recursion
 # stops so nested functions aren't double-chunked.
-_TS_EXTRACT_TYPES: dict[str, set[str]] = {
+TS_EXTRACT_TYPES: dict[str, set[str]] = {
     'go': {'function_declaration', 'method_declaration'},
     'typescript': {'function_declaration', 'method_definition'},
     'tsx': {'function_declaration', 'method_definition'},
@@ -397,7 +397,7 @@ _TS_EXTRACT_TYPES: dict[str, set[str]] = {
     'lua': {'function_declaration'},
 }
 
-_TS_SYMBOL_TYPE_MAP: dict[str, str] = {
+TS_SYMBOL_TYPE_MAP: dict[str, str] = {
     'function_declaration': 'function',
     'method_declaration': 'method',
     'method_definition': 'method',
@@ -405,7 +405,7 @@ _TS_SYMBOL_TYPE_MAP: dict[str, str] = {
 }
 
 
-def ts_symbol_name(node: '_Node') -> str | None:
+def ts_symbol_name(node: 'Node') -> str | None:
     name_node = node.child_by_field_name('name')
     if name_node is None or name_node.text is None:
         return None
@@ -413,7 +413,7 @@ def ts_symbol_name(node: '_Node') -> str | None:
 
 
 def ts_walk(
-    node: '_Node',
+    node: 'Node',
     lines: list[str],
     file_path: str,
     repo: str,
@@ -436,7 +436,7 @@ def ts_walk(
                     repo=repo,
                     language=language,
                     symbol_name=ts_symbol_name(node),
-                    symbol_type=_TS_SYMBOL_TYPE_MAP.get(node.type, 'function'),
+                    symbol_type=TS_SYMBOL_TYPE_MAP.get(node.type, 'function'),
                 )
             )
         return  # don't recurse — avoids double-chunking nested definitions
@@ -451,11 +451,11 @@ def chunk_treesitter(file_path: str, content: str, repo: str, language: str | No
     Falls back to recursive code splitter if tree-sitter packages are not installed."""
     # .tsx files share the 'typescript' language label but need the tsx grammar
     lang_key = 'tsx' if file_path.endswith('.tsx') else language
-    new_parser = _TS_PARSERS.get(lang_key or '')
+    new_parser = TS_PARSERS.get(lang_key or '')
     if new_parser is None:
         return chunk_code(file_path, content, repo, language)
 
-    extract_types = _TS_EXTRACT_TYPES.get(lang_key or '', set())
+    extract_types = TS_EXTRACT_TYPES.get(lang_key or '', set())
     parser = new_parser()
     tree = parser.parse(bytes(content, 'utf-8'))
 
@@ -484,7 +484,7 @@ def resolve_attr_name(node: ast.expr) -> tuple[str, str | None]:
     return '', None
 
 
-class _ReferenceExtractor(ast.NodeVisitor):
+class ReferenceExtractor(ast.NodeVisitor):
     """Walk a Python AST and collect symbol references with caller context."""
 
     def __init__(self, file_path: str) -> None:
@@ -571,6 +571,6 @@ def extract_references(file_path: str, content: str) -> list[Reference]:
         tree = ast.parse(content)
     except SyntaxError:
         return []
-    extractor = _ReferenceExtractor(file_path)
+    extractor = ReferenceExtractor(file_path)
     extractor.visit(tree)
     return extractor.refs

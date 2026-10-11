@@ -15,7 +15,7 @@ class IndexNotFoundError(Exception):
     """There is no database at DB_PATH to read."""
 
 
-def _load_vec_extension(conn: sqlite3.Connection) -> None:
+def load_vec_extension(conn: sqlite3.Connection) -> None:
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
@@ -51,7 +51,7 @@ def open_working_db() -> sqlite3.Connection:
     conn = sqlite3.connect(WORKING_DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA journal_mode=WAL')
-    _load_vec_extension(conn)
+    load_vec_extension(conn)
     init_schema(conn)
     return conn
 
@@ -110,7 +110,7 @@ def get_read_db() -> sqlite3.Connection:
         raise IndexNotFoundError(f'No index at {DB_PATH}. Run `indy index`, or wait for a peer to deliver one.')
     conn = sqlite3.connect(f'file:{DB_PATH}?mode=ro', uri=True)
     conn.row_factory = sqlite3.Row
-    _load_vec_extension(conn)
+    load_vec_extension(conn)
     return conn
 
 

@@ -69,7 +69,7 @@ from indy.storage import search_chunks
 from indy.storage import start_index_run
 from indy.storage import upsert_indexed_file
 
-_INDEXABLE_EXTENSIONS = CODE_EXTENSIONS | DOC_EXTENSIONS | CONFIG_EXTENSIONS
+INDEXABLE_EXTENSIONS = CODE_EXTENSIONS | DOC_EXTENSIONS | CONFIG_EXTENSIONS
 
 
 @dataclass(frozen=True)
@@ -120,7 +120,7 @@ def should_index(path: Path) -> bool:
     if path.name in SKIP_FILES:
         return False
     if path.suffix:
-        wanted = path.suffix.lower() in _INDEXABLE_EXTENSIONS
+        wanted = path.suffix.lower() in INDEXABLE_EXTENSIONS
     else:
         wanted = path.name in CODE_FILENAMES or shebang_language(read_first_line(path)) is not None
     return wanted and path.stat().st_size <= MAX_FILE_SIZE_BYTES

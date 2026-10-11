@@ -25,13 +25,13 @@ from pathlib import Path
 from typing import Any
 
 
-def _xdg_base(env_var: str, *fallback: str) -> Path:
+def xdg_base(env_var: str, *fallback: str) -> Path:
     override = os.environ.get(env_var)
     return Path(override).expanduser() if override else Path.home().joinpath(*fallback)
 
 
-CONFIG_HOME = _xdg_base('XDG_CONFIG_HOME', '.config')
-DATA_HOME = _xdg_base('XDG_DATA_HOME', '.local', 'share')
+CONFIG_HOME = xdg_base('XDG_CONFIG_HOME', '.config')
+DATA_HOME = xdg_base('XDG_DATA_HOME', '.local', 'share')
 
 CONFIG_DIR = CONFIG_HOME / 'indy'
 CONFIG_PATH = CONFIG_DIR / 'config.toml'
