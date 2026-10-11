@@ -23,6 +23,7 @@ indy search "query" --reference # only third-party exemplar clones
 indy search "query" --json      # machine-readable JSON output
 indy symbol get_db              # exact symbol lookup by function/class name
 indy deps get_db                # reference graph: callers + callees of a symbol
+indy deps Store.save -d callers # Owner.member: self calls, typed params, module hints
 indy config show                # resolved settings and which layer supplied each
 indy status                     # index health: file counts, last run
 indy errors                     # per-file error listing grouped by repo

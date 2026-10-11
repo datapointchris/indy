@@ -6,6 +6,7 @@ from indy.chunker import FILENAME_LANGUAGES
 from indy.chunker import LANGUAGE_MAP
 from indy.chunker import chunk_config
 from indy.chunker import chunk_file
+from indy.chunker import extract_references
 from indy.chunker import shebang_language
 from indy.config import CODE_EXTENSIONS
 from indy.config import CODE_FILENAMES
@@ -74,3 +75,36 @@ def test_small_config_is_still_kept_whole():
 
 def test_empty_config_produces_nothing():
     assert chunk_config('empty.yml', '   \n\n', 'indy', 'yaml') == []
+
+
+def test_a_name_used_as_a_value_is_a_reference_row():
+    """A function placed in a dispatch table is never called by name, so a value is its only trace."""
+    content = (
+        'def wire(param):\n'
+        '    local = make()\n'
+        '    register(handler, name=local)\n'
+        '    on_event = lambda event: event\n'
+        '    return [handler, param, local, len, on_event]\n'
+    )
+    refs = [(ref.target_symbol, ref.ref_type) for ref in extract_references('m.py', content)]
+    assert sorted(refs) == [('handler', 'reference'), ('handler', 'reference'), ('make', 'call'), ('register', 'call')]
+
+
+def test_module_level_code_is_attributed_to_its_assignment_target():
+    content = "STEPS: dict = {'wslconfig': (anywhere(check), unprivileged(write_wslconfig))}\nDEFAULT = make()\nHANDLERS[key()] = handler\n"
+    refs = {(ref.source_symbol, ref.target_symbol, ref.ref_type) for ref in extract_references('m.py', content)}
+    assert refs == {
+        ("STEPS['wslconfig']", 'anywhere', 'call'),
+        ("STEPS['wslconfig']", 'check', 'reference'),
+        ("STEPS['wslconfig']", 'unprivileged', 'call'),
+        ("STEPS['wslconfig']", 'write_wslconfig', 'reference'),
+        ('DEFAULT', 'make', 'call'),
+        (None, 'HANDLERS', 'reference'),
+        (None, 'key', 'call'),
+        (None, 'handler', 'reference'),
+    }
+
+
+def test_an_inherit_row_names_the_subclass():
+    refs = extract_references('m.py', 'class Base:\n    pass\n\n\nclass Child(Base):\n    pass\n')
+    assert [(ref.source_symbol, ref.target_symbol) for ref in refs if ref.ref_type == 'inherit'] == [('Child', 'Base')]

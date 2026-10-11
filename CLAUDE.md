@@ -106,8 +106,21 @@ ships 14 doc translations, so `docs/*/**` then `!docs/en/**` keeps the 154 Engli
   filter by repo/language in Python.
 - **No git post-commit hook** — an on-demand `indy index`, scheduled or run by hand, covers the
   use case. Per-repo hook management adds maintenance overhead for marginal gain.
-- **symbol_reference is Python-only** — tree-sitter already parses Go/TS/Rust/Lua for chunking;
-  reference extraction for those languages is deferred. Python AST covers the primary use case.
+- **symbol_reference is Python-only, and syntactic** — tree-sitter already parses Go/TS/Rust/Lua
+  for chunking; reference extraction for those languages is deferred. Beside `call`, `import` and
+  `inherit` rows, a name used as any other value is a `reference` row. That is the only trace a
+  function placed in a dispatch table leaves, since nothing calls it by name.
+- **`deps A.b` resolves receivers without a type checker** — it matches a module hint of `A`,
+  `self.b` in `A`'s class tree, `.b` on a parameter annotated with `A` or an ancestor, and a bare
+  `b` in a file named `A`. Every caller carries the rule that matched it as `via`. A call of `.b`
+  on an untyped receiver is listed as a `candidate` only when nothing else matched. Matching a
+  method by name alone buries the real caller among every unrelated `.install` in the index.
+  Exact resolution, overrides and inferred types are a type checker's job and stay out.
+- **Changing the extractor bumps `EXTRACTOR_VERSION`** — an unchanged file is skipped before it
+  is embedded, so a new extractor would never reach it. A file whose stored version differs has
+  its references re-extracted from the content the scan already read, keeping its vectors. The
+  version is per file rather than per index, because `indy index <repo>` covers one target and
+  a global version would mark every other target current.
 - **Ownership resolved at service layer, not storage** — service.py resolves `--owned`/`--reference`
   into a set of repo names and passes it to storage as a generic filter. Storage knows nothing
   about ownership.

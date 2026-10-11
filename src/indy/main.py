@@ -465,12 +465,18 @@ def symbol(
 
 @indy_app.command('deps')
 def deps(
-    symbol_name: str = typer.Argument(..., help='Symbol to trace through the reference graph.'),
+    symbol_name: str = typer.Argument(..., help="A bare name, or 'Owner.member' for a method or a module's function."),
     repo: str = typer.Option(None, '--repo', '-r', help='Limit to this repo.'),
     direction: str = typer.Option('both', '--direction', '-d', help="'callers', 'callees', or 'both'."),
     as_json: bool = typer.Option(False, '--json', help='Output as JSON to stdout.'),
 ):
-    """Find what calls a symbol or what it calls, using the Python reference graph."""
+    """Find what calls a symbol or what it calls, using the Python reference graph.
+
+    Each caller says how it matched: call, reference (used as a value), self, typed (an
+    annotated parameter), module (a bare name in the owner's own file), or candidate. A
+    candidate is a call by method name on an untyped receiver, listed only when nothing
+    else matched.
+    """
     if direction not in ('callers', 'callees', 'both'):
         console.print("[red]--direction must be 'callers', 'callees', or 'both'.[/red]")
         raise typer.Exit(1)
@@ -490,7 +496,7 @@ def deps(
             if not callers:
                 console.print('  (none)')
             for c in callers:
-                console.print(f'  [cyan]{c["source_symbol"] or "?"}[/cyan] — {c["source_file"]}')
+                console.print(f'  [dim]{c["via"]:<9}[/dim] [cyan]{escape(c["source_symbol"] or "?")}[/cyan] — {c["source_file"]}')
 
         if 'callees' in result:
             console.print(f'\n[bold]Callees of {symbol_name}[/bold] ({len(callees)})')
