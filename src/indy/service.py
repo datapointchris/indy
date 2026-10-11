@@ -618,14 +618,17 @@ def root_for(path: Path, roots: list[LiveRoot]) -> LiveRoot | None:
 
 
 def is_worktree_event(path: Path) -> bool:
-    """Whether path records a worktree being added, removed or switched: `.git/worktrees/<name>` itself, or its HEAD.
+    """Whether path records a worktree being added, removed or switched: `.git/worktrees`, `.git/worktrees/<name>`, or its HEAD.
 
-    The rest of that directory changes on every `git status` run inside the worktree.
+    The rest of a worktree's directory changes on every `git status` run inside it.
+    `.git/worktrees` counts because a repo's first `git worktree add` creates it, and a watch
+    reaches a new directory's contents only once it has registered that directory. By then
+    git has usually written the worktree's directory and HEAD, so neither raises an event.
     """
     parts = path.parts
-    for at in range(len(parts) - 2):
+    for at in range(len(parts) - 1):
         if parts[at] == '.git' and parts[at + 1] == 'worktrees':
-            return parts[at + 3 :] in ((), ('HEAD',))
+            return len(parts) - at <= 3 or parts[at + 3 :] == ('HEAD',)
     return False
 
 
