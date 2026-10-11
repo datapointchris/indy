@@ -134,3 +134,4 @@ def test_json_carries_the_freshness_an_agent_would_otherwise_have_to_ask_for(ind
     assert payload['results'] == []
     assert payload['freshness']['oldest']['repo'] == 'stale'
     assert payload['freshness']['oldest']['age_seconds'] > 14 * 86400
+    assert payload['freshness']['overlay'] is None

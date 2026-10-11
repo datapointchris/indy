@@ -1,7 +1,9 @@
 import difflib
 import importlib.metadata
 import json
+import signal
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Annotated
@@ -29,6 +31,7 @@ from indy.storage import IndexNotFoundError
 
 indy_app = typer.Typer(name='indy', no_args_is_help=True, help='Semantic search index for local codebases, docs, and notes.')
 console = Console(highlight=False)
+err_console = Console(highlight=False, stderr=True)
 
 
 # Shared by the `update` command and the daily check below, so the notice cannot
@@ -314,14 +317,29 @@ def format_age(seconds: float) -> str:
 
 
 def describe_freshness(freshness: dict) -> str:
-    """One sentence bounding the age of everything the read could have matched."""
+    """One sentence bounding the age of everything the read could have matched, and one for the overlay above it."""
     oldest = format_age(freshness['oldest']['age_seconds'])
     newest = format_age(freshness['newest']['age_seconds'])
     if freshness['repos'] == 1:
-        return f'Index: {freshness["oldest"]["repo"]} scanned {oldest} ago.'
-    if oldest == newest:
-        return f'Index: {freshness["repos"]} repos, all scanned {oldest} ago.'
-    return f'Index: {freshness["repos"]} repos, scanned between {newest} and {oldest} ago.'
+        scanned = f'Index: {freshness["oldest"]["repo"]} scanned {oldest} ago.'
+    elif oldest == newest:
+        scanned = f'Index: {freshness["repos"]} repos, all scanned {oldest} ago.'
+    else:
+        scanned = f'Index: {freshness["repos"]} repos, scanned between {newest} and {oldest} ago.'
+    live = freshness.get('overlay')
+    if live is None:
+        return scanned
+    if not live['applied'] and live['files']:
+        held = f'{live["files"]} saved file{"" if live["files"] == 1 else "s"}'
+        return f'{scanned} Live: {held} set aside until `indy watch` reconciles the overlay with this index.'
+    files = f'{live["files"]} file{"" if live["files"] == 1 else "s"} newer than the scan'
+    updated = f', updated {format_age(live["age_seconds"])} ago' if 'age_seconds' in live else ''
+    return f'{scanned} Live: {files}{updated}.'
+
+
+def format_branch(row: dict) -> str:
+    """` @branch` for a result from a linked worktree, or nothing for a main checkout's."""
+    return f' [yellow]@{escape(row["branch"])}[/yellow]' if row.get('branch') else ''
 
 
 def print_freshness(repo: str | None = None, owned: bool | None = None) -> None:
@@ -352,7 +370,7 @@ def print_index_result(result: dict) -> None:
 
 
 @indy_app.command('errors')
-def errors():
+def errors() -> None:
     """Show all indexing errors, grouped by repo with per-file details."""
     stats = service.get_status()
     error_details = stats.get('error_file_details', [])
@@ -399,6 +417,47 @@ def forget(
     console.print('Run [bold]indy index[/bold] to re-index whatever is still a target.')
 
 
+@indy_app.command('watch')
+def watch():
+    """Index every save on this machine within a second, until stopped.
+
+    Runs in the foreground, for a service manager to keep alive. Each save in a repo, a linked
+    worktree or an extra path goes into a local overlay that every read here sees on top of the
+    index. Exemplar clones are left to `indy index`, which also clears from the overlay
+    whatever the new index holds.
+    """
+    stop = threading.Event()
+    for signum in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(signum, lambda *_: stop.set())
+    service.watch(stop, on_change=print_live_change, on_note=print_note, on_problem=print_problem)
+    console.print('Stopped.')
+
+
+def clock() -> str:
+    return time.strftime('%H:%M:%S')
+
+
+# soft_wrap: under a service manager no terminal sets a width, and rich would break each line at 80.
+
+
+def print_live_change(change: service.LiveChange) -> None:
+    detail = {
+        'indexed': f'{change.embedded} embedded, {change.reused} reused',
+        'removed': 'deleted',
+        'restored': 'matches the index again',
+    }[change.action]
+    line = f'{clock()} {change.action:<8} {escape(change.file_path)}{format_branch(vars(change))} · {detail} · {change.seconds:.2f}s'
+    console.print(line, soft_wrap=True)
+
+
+def print_note(message: str) -> None:
+    console.print(f'{clock()} {escape(message)}', soft_wrap=True)
+
+
+def print_problem(message: str) -> None:
+    err_console.print(f'{clock()} [red]{escape(message)}[/red]', soft_wrap=True)
+
+
 @indy_app.command('search')
 def search(
     query: str = typer.Argument(..., help='Natural language search query.'),
@@ -428,7 +487,7 @@ def search(
     for i, r in enumerate(results, 1):
         score = 1 - r['distance']  # convert distance to similarity
         symbol = f' · {r["symbol_name"]}' if r.get('symbol_name') else ''
-        console.print(f'\n[bold cyan]{i}.[/bold cyan] {r["file_path"]}{symbol}  (score: {score:.2f})')
+        console.print(f'\n[bold cyan]{i}.[/bold cyan] {r["file_path"]}{format_branch(r)}{symbol}  (score: {score:.2f})')
         snippet = r['text'][:300].replace('\n', '\n   ')
         console.print(f'   {snippet}')
         if len(r['text']) > 300:
@@ -454,7 +513,7 @@ def symbol(
 
     for i, r in enumerate(results, 1):
         kind = f'{r["symbol_type"]} ' if r.get('symbol_type') else ''
-        console.print(f'\n[bold cyan]{i}.[/bold cyan] {kind}[bold]{r["symbol_name"]}[/bold] — {r["file_path"]}')
+        console.print(f'\n[bold cyan]{i}.[/bold cyan] {kind}[bold]{r["symbol_name"]}[/bold] — {r["file_path"]}{format_branch(r)}')
         snippet = r['text'][:300].replace('\n', '\n   ')
         console.print(f'   {snippet}')
         if len(r['text']) > 300:
@@ -498,7 +557,8 @@ def deps(
             if not callers:
                 console.print('  (none)')
             for c in callers:
-                console.print(f'  [magenta]{c["via"]:<9}[/magenta] [cyan]{escape(c["source_symbol"] or "?")}[/cyan] — {c["source_file"]}')
+                caller = f'[cyan]{escape(c["source_symbol"] or "?")}[/cyan]'
+                console.print(f'  [magenta]{c["via"]:<9}[/magenta] {caller} — {c["source_file"]}{format_branch(c)}')
 
         if 'callees' in result:
             console.print(f'\n[bold]Callees of {escape(symbol_name)}[/bold] ({len(callees)})')
@@ -506,7 +566,7 @@ def deps(
                 console.print('  (none)')
             for c in callees:
                 module_prefix = f'{c["target_module"]}.' if c.get('target_module') else ''
-                console.print(f'  [cyan]{module_prefix}{c["target_symbol"]}[/cyan] — {c["source_file"]}')
+                console.print(f'  [cyan]{module_prefix}{c["target_symbol"]}[/cyan] — {c["source_file"]}{format_branch(c)}')
 
     print_freshness(repo=repo)
 

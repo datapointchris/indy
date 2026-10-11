@@ -16,6 +16,7 @@ Local-first: sqlite-vec for vector storage, ollama for embeddings. No external A
 indy index                      # index every active repo plus any configured extra paths
 indy index myrepo               # index a single repo by name
 indy index --path ~/writing/    # index an arbitrary path
+indy watch                      # index every save within a second, until stopped
 indy search "query"             # semantic search across all indexed content
 indy search "query" --repo indy --language python
 indy search "query" --owned     # only repos from your own registry
@@ -40,7 +41,27 @@ carries the same thing as a `freshness` object. Indexing is manual, so a symbol 
 today is absent from an index scanned last week and a flat "no symbol named X" cannot be
 told from one that does not exist. The number quoted is the *oldest* scan the read could
 have matched, not the newest: indexing one repo makes the newest minutes old while every
-other label stays where it was.
+other label stays where it was. Where `indy watch` is running, the line also says how many
+files are newer than the scan, and when the watcher last wrote. Where the index was replaced
+after the watcher last compared its saves with it, the line says those saves are set aside.
+
+## Live indexing
+
+`indy watch` runs in the foreground until stopped, for a service manager to keep alive. Each
+save is indexed into a local overlay that every read on that machine sees on top of the
+index, so `search`, `symbol` and `deps` return it about a second later. A deleted file drops
+out of results the same way.
+
+It watches every registered repo and extra path, and the linked worktrees of each repo
+(`git worktree list`). A worktree file is indexed under its repo's name, only where it
+differs from the main checkout, and each result from one shows `@branch`. Exemplar clones
+are left to `indy index`.
+
+Each index has its own overlay under `$XDG_CACHE_HOME/indy/overlays/`, outside the data
+directory, so a setup that syncs the index never carries it. `indy config show` prints its
+path. The overlay is compacted against the index whenever a new one is built or arrives,
+and every file the index now holds drops out of it. Until that happens, a read sets the
+overlay aside and says so, rather than letting older saves hide the newer index.
 
 ## Configuration
 
@@ -123,8 +144,10 @@ paths fall back to a directory walk.
 ## Architecture
 
 ```yaml
-storage.py     SQLite manifest (indexed_file, index_run, symbol_reference) + sqlite-vec vectors
-service.py     All logic: index_path, search, search_symbol, refresh, get_dependencies
+storage.py     SQLite manifest (indexed_file, index_run, symbol_reference) + sqlite-vec vectors,
+               and the overlay a read sees on top of them
+service.py     All logic: index_path, search, search_symbol, refresh, get_dependencies, watch
+watch.py       Filesystem events for `indy watch`: debounced batches and a newest-first queue
 chunker.py     Python AST chunking + tree-sitter (Go/TS/Rust/Lua) + prose/code splitters
                + Python reference extraction (call graph)
 repos.py       Reads both registries, returns index targets with resolved paths.
@@ -136,6 +159,8 @@ main.py        Thin Typer CLI wrappers over service.py
 ## Data
 
 - Index: `$XDG_DATA_HOME/indy/indy.db` (override with `data_dir` or `INDY_DIR`)
+- Live overlay: one file per index under `$XDG_CACHE_HOME/indy/overlays/`, written only by
+  `indy watch`; `indy config show` prints its path
 - Embeddings: ollama `nomic-embed-text` at `http://localhost:11434`
 
 Chunk paths are stored `~`-relative, so one index file is portable across machines
