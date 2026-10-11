@@ -125,7 +125,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
             content_hash TEXT NOT NULL,
             chunk_count  INTEGER NOT NULL,
             indexed_at   TEXT NOT NULL,
-            status       TEXT DEFAULT 'ok'
+            status       TEXT DEFAULT 'ok',
+            extractor_version INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS index_run (
@@ -150,6 +151,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
             text         TEXT NOT NULL
         );
 
+        CREATE INDEX IF NOT EXISTS idx_chunk_symbol ON chunk(symbol_name);
+
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
             embedding float[{EMBEDDING_DIM}] distance_metric=cosine
         );
@@ -164,7 +167,11 @@ def init_schema(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_symref_source ON symbol_reference(source_file);
         CREATE INDEX IF NOT EXISTS idx_symref_target ON symbol_reference(target_symbol);
+        CREATE INDEX IF NOT EXISTS idx_symref_inherit ON symbol_reference(source_symbol) WHERE ref_type = 'inherit';
     """)
+    # CREATE TABLE IF NOT EXISTS never reaches an index built before the column existed.
+    if 'extractor_version' not in {row[1] for row in conn.execute('PRAGMA table_info(indexed_file)')}:
+        conn.execute('ALTER TABLE indexed_file ADD COLUMN extractor_version INTEGER NOT NULL DEFAULT 0')
     conn.commit()
 
 
@@ -179,8 +186,8 @@ def get_indexed_file(conn: sqlite3.Connection, file_path: str) -> dict | None:
 def upsert_indexed_file(conn: sqlite3.Connection, data: dict) -> None:
     conn.execute(
         """
-        INSERT INTO indexed_file (repo, file_path, language, mtime, content_hash, chunk_count, indexed_at, status)
-        VALUES (:repo, :file_path, :language, :mtime, :content_hash, :chunk_count, :indexed_at, :status)
+        INSERT INTO indexed_file (repo, file_path, language, mtime, content_hash, chunk_count, indexed_at, status, extractor_version)
+        VALUES (:repo, :file_path, :language, :mtime, :content_hash, :chunk_count, :indexed_at, :status, :extractor_version)
         ON CONFLICT (file_path) DO UPDATE SET
             repo         = excluded.repo,
             language     = excluded.language,
@@ -188,10 +195,15 @@ def upsert_indexed_file(conn: sqlite3.Connection, data: dict) -> None:
             content_hash = excluded.content_hash,
             chunk_count  = excluded.chunk_count,
             indexed_at   = excluded.indexed_at,
-            status       = excluded.status
+            status       = excluded.status,
+            extractor_version = excluded.extractor_version
         """,
         data,
     )
+
+
+def set_extractor_version(conn: sqlite3.Connection, file_path: str, version: int) -> None:
+    conn.execute('UPDATE indexed_file SET extractor_version = ? WHERE file_path = ?', (version, file_path))
 
 
 # ── chunks + vectors ──────────────────────────────────────────────────────────
@@ -444,43 +456,148 @@ def insert_references(conn: sqlite3.Connection, refs: list[dict]) -> None:
     )
 
 
+VALUE_USE = "sr.ref_type IN ('call', 'reference')"
+
+
+def imported_by_source_file(column: str) -> str:
+    """A condition true when the row's own file imports the name in column."""
+    return (
+        'EXISTS (SELECT 1 FROM symbol_reference i'
+        f" WHERE i.source_file = sr.source_file AND i.ref_type = 'import' AND i.target_symbol = {column})"
+    )
+
+
+def select_references(
+    conn: sqlite3.Connection,
+    condition: str,
+    params: tuple,
+    repo: str | None = None,
+    order_by: str = 'sr.source_file, sr.source_symbol',
+) -> list[dict]:
+    """symbol_reference rows matching condition, narrowed to one repo through the manifest when repo is set."""
+    join, repo_condition = ('JOIN indexed_file f ON sr.source_file = f.file_path', ' AND f.repo = ?') if repo else ('', '')
+    rows = conn.execute(
+        f'SELECT sr.* FROM symbol_reference sr {join} WHERE {condition}{repo_condition} ORDER BY {order_by}',
+        (*params, repo) if repo else params,
+    )
+    return [dict(row) for row in rows]
+
+
+def labeled(rows: list[dict], via: str | None = None) -> list[dict]:
+    """Each row with how it matched: the named rule, or else its own ref_type."""
+    return [{**row, 'via': via or row['ref_type']} for row in rows]
+
+
 def get_symbol_callers(conn: sqlite3.Connection, target_symbol: str, repo: str | None = None) -> list[dict]:
-    """Return all references that call target_symbol (i.e. what calls it)."""
-    if repo:
-        rows = conn.execute(
-            """
-            SELECT sr.*
-            FROM symbol_reference sr
-            JOIN indexed_file f ON sr.source_file = f.file_path
-            WHERE sr.target_symbol = ? AND sr.ref_type = 'call' AND f.repo = ?
-            ORDER BY sr.source_file, sr.source_symbol
-            """,
-            (target_symbol, repo),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM symbol_reference WHERE target_symbol = ? AND ref_type = 'call' ORDER BY source_file, source_symbol",
-            (target_symbol,),
-        ).fetchall()
-    return [dict(row) for row in rows]
+    """Every row that calls target_symbol or uses it as a value."""
+    return labeled(select_references(conn, f'sr.target_symbol = ? AND {VALUE_USE}', (target_symbol,), repo))
 
 
-def get_symbol_callees(conn: sqlite3.Connection, source_symbol: str, repo: str | None = None) -> list[dict]:
-    """Return all calls made by source_symbol (i.e. what it calls)."""
-    if repo:
-        rows = conn.execute(
-            """
-            SELECT sr.*
+def get_class_lineage(conn: sqlite3.Connection, class_name: str) -> set[str]:
+    """class_name and every class it inherits from, matched by name through the inherit rows.
+
+    UNION rather than UNION ALL is what ends the walk on a cycle. Matching by name makes one
+    possible: two indexed repos can each declare a class inheriting from the other's namesake.
+    """
+    rows = conn.execute(
+        """
+        WITH RECURSIVE lineage(name) AS (
+            VALUES (?)
+            UNION
+            SELECT sr.target_symbol
             FROM symbol_reference sr
-            JOIN indexed_file f ON sr.source_file = f.file_path
-            WHERE sr.source_symbol = ? AND sr.ref_type = 'call' AND f.repo = ?
-            ORDER BY sr.target_symbol
-            """,
-            (source_symbol, repo),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT * FROM symbol_reference WHERE source_symbol = ? AND ref_type = 'call' ORDER BY target_symbol",
-            (source_symbol,),
-        ).fetchall()
-    return [dict(row) for row in rows]
+            JOIN lineage ON sr.source_symbol = lineage.name
+            WHERE sr.ref_type = 'inherit'
+        )
+        SELECT name FROM lineage
+        """,
+        (class_name,),
+    )
+    return {row[0] for row in rows}
+
+
+def get_class_heirs(conn: sqlite3.Connection, class_name: str, member: str) -> set[str]:
+    """Every class inheriting class_name's own `member`: its subclasses, down to any that defines one.
+
+    An override is a different method, so a subclass defining `member` ends the walk below it.
+    A definition is read from the chunk table, where each method is chunked as `Class.member`.
+    """
+    rows = conn.execute(
+        """
+        WITH RECURSIVE heirs(name) AS (
+            VALUES (?)
+            UNION
+            SELECT sr.source_symbol
+            FROM symbol_reference sr
+            JOIN heirs ON sr.target_symbol = heirs.name
+            WHERE sr.ref_type = 'inherit'
+              AND NOT EXISTS (SELECT 1 FROM chunk c WHERE c.symbol_name = sr.source_symbol || '.' || ?)
+        )
+        SELECT name FROM heirs
+        """,
+        (class_name, member),
+    )
+    return {row[0] for row in rows} - {class_name}
+
+
+def is_indexed_class(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute("SELECT 1 FROM chunk WHERE symbol_name = ? AND symbol_type = 'class' LIMIT 1", (name,)).fetchone() is not None
+
+
+def get_member_callers(conn: sqlite3.Connection, owner: str, member: str, repo: str | None = None) -> list[dict]:
+    """What reaches `owner.member`, by five syntactic rules, each row labeled with the rule that matched.
+
+    - its ref_type: a row hinted with the owner's name, as `steps.apply(...)` is, which includes a
+      parameter annotated with the owner itself;
+    - `self`: `self.member` inside the owner, a class it inherits from, or a subclass that does
+      not override `member`;
+    - `typed`: `.member` on a parameter annotated with one of those classes other than the owner;
+    - `module`: a bare `member` in a file named after the owner that does not import it;
+    - `candidate`: `.member` called on a receiver nothing types. Listed after every resolved row,
+      when the owner is an indexed class or no rule above matched anything.
+    """
+    name = owner.rpartition('.')[2]
+    classes = get_class_lineage(conn, owner) | get_class_lineage(conn, name) | get_class_heirs(conn, name, member)
+    related = sorted(classes - {owner, name})
+
+    found = labeled(select_references(conn, f'sr.target_symbol = ? AND sr.target_module = ? AND {VALUE_USE}', (member, name), repo))
+    self_uses = select_references(conn, "sr.target_symbol = ? AND sr.target_module IN ('self', 'cls')", (member,), repo)
+    found += labeled([row for row in self_uses if any((row['source_symbol'] or '').startswith(f'{cls}.') for cls in classes)], 'self')
+    if related:
+        marks = ', '.join('?' * len(related))
+        typed = select_references(conn, f'sr.target_symbol = ? AND sr.target_module IN ({marks}) AND {VALUE_USE}', (member, *related), repo)
+        found += labeled(typed, 'typed')
+    bare = select_references(
+        conn,
+        f'sr.target_symbol = ? AND sr.target_module IS NULL AND {VALUE_USE} AND NOT {imported_by_source_file("sr.target_symbol")}',
+        (member,),
+        repo,
+    )
+    found += labeled([row for row in bare if Path(row['source_file']).stem == name], 'module')
+    if found and not is_indexed_class(conn, name):
+        return found
+
+    untyped = select_references(
+        conn,
+        "sr.target_symbol = ? AND sr.ref_type = 'call' AND sr.target_module IS NOT NULL AND sr.target_module NOT IN ('self', 'cls')"
+        f' AND NOT {imported_by_source_file("sr.target_module")}',
+        (member,),
+        repo,
+    )
+    seen = {row['id'] for row in found}
+    return found + labeled([row for row in untyped if row['id'] not in seen and not row['target_module'][:1].isupper()], 'candidate')
+
+
+def get_symbol_callees(conn: sqlite3.Connection, source_symbol: str, repo: str | None = None, file_stem: str | None = None) -> list[dict]:
+    """Every call made inside source_symbol, and inside each of its keys when it names a module-level dict.
+
+    file_stem narrows the rows to files of that name, for a module function named `module.function`.
+    """
+    rows = select_references(
+        conn,
+        "(sr.source_symbol = ? OR substr(sr.source_symbol, 1, ?) = ?) AND sr.ref_type = 'call'",
+        (source_symbol, len(source_symbol) + 1, f'{source_symbol}['),
+        repo,
+        order_by='sr.target_symbol',
+    )
+    return [row for row in rows if file_stem is None or Path(row['source_file']).stem == file_stem]

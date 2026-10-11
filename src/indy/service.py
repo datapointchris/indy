@@ -14,6 +14,7 @@ from pathlib import Path
 
 import httpx2
 
+from indy.chunker import EXTRACTOR_VERSION
 from indy.chunker import chunk_file
 from indy.chunker import detect_language
 from indy.chunker import extract_references
@@ -54,6 +55,7 @@ from indy.storage import get_index_stats
 from indy.storage import get_indexed_file
 from indy.storage import get_indexed_repos
 from indy.storage import get_last_scans
+from indy.storage import get_member_callers
 from indy.storage import get_read_db
 from indy.storage import get_recent_runs
 from indy.storage import get_repo_file_paths
@@ -64,8 +66,10 @@ from indy.storage import index_size_bytes as index_size_bytes
 from indy.storage import insert_chunk
 from indy.storage import insert_chunk_embedding
 from indy.storage import insert_references
+from indy.storage import is_indexed_class
 from indy.storage import open_working_db
 from indy.storage import search_chunks
+from indy.storage import set_extractor_version
 from indy.storage import start_index_run
 from indy.storage import upsert_indexed_file
 
@@ -274,6 +278,14 @@ def prune_missing_files(conn: sqlite3.Connection, repo_name: str, root: Path) ->
     return len(stale)
 
 
+def replace_references(conn: sqlite3.Connection, db_path: str, content: str) -> None:
+    """Swap a file's symbol_reference rows for ones extracted from content."""
+    delete_file_references(conn, db_path)
+    refs = extract_references(db_path, content)
+    if refs:
+        insert_references(conn, [asdict(r) for r in refs])
+
+
 def index_into(
     conn: sqlite3.Connection,
     root: Path,
@@ -316,19 +328,28 @@ def index_into(
         # two are nothing alike: everything is read and hashed, and almost none of it is
         # re-embedded. Files needing work are read a second time below, which costs one extra
         # pass over the ones that changed and is invisible beside the cost of embedding them.
+        #
+        # An unchanged file is never re-embedded, so it would also never reach a newer reference
+        # extractor. Its references are re-extracted here from the content already read, leaving
+        # its chunks and vectors alone.
         pending = []
         for filepath in indexable_files:
             files_scanned += 1
             report(filepath.name)
             try:
-                content_hash = compute_content_hash(filepath.read_text(encoding='utf-8', errors='ignore'))
+                content = filepath.read_text(encoding='utf-8', errors='ignore')
             except OSError:
                 pending.append(filepath)  # let the work pass fail on it and record why
                 continue
-            existing = get_indexed_file(conn, compact_path(str(filepath)))
-            if existing and existing['content_hash'] == content_hash:
-                continue  # unchanged — skip re-embedding
+            db_path = compact_path(str(filepath))
+            existing = get_indexed_file(conn, db_path)
+            if existing and existing['content_hash'] == compute_content_hash(content):
+                if existing['extractor_version'] != EXTRACTOR_VERSION:
+                    replace_references(conn, db_path, content)
+                    set_extractor_version(conn, db_path, EXTRACTOR_VERSION)
+                continue
             pending.append(filepath)
+        conn.commit()
 
         to_update = len(pending)
         report('')
@@ -350,11 +371,7 @@ def index_into(
                     continue
 
                 delete_file_chunks(conn, db_path)
-                delete_file_references(conn, db_path)
-
-                refs = extract_references(db_path, content)
-                if refs:
-                    insert_references(conn, [asdict(r) for r in refs])
+                replace_references(conn, db_path, content)
 
                 file_chunks_added = 0
                 for chunk in chunks:
@@ -385,6 +402,7 @@ def index_into(
                         'chunk_count': file_chunks_added,
                         'indexed_at': dt.datetime.now(dt.UTC).isoformat(),
                         'status': 'ok',
+                        'extractor_version': EXTRACTOR_VERSION,
                     },
                 )
                 conn.commit()
@@ -403,6 +421,7 @@ def index_into(
                         'chunk_count': 0,
                         'indexed_at': dt.datetime.now(dt.UTC).isoformat(),
                         'status': f'error: {exc}',
+                        'extractor_version': 0,
                     },
                 )
                 conn.commit()
@@ -646,6 +665,46 @@ def indexed_repo_names() -> list[str]:
         conn.close()
 
 
+def is_test_path(path: str) -> bool:
+    parts = Path(path).parts
+    name = parts[-1] if parts else ''
+    return bool({'tests', 'test'} & set(parts)) or name.startswith('test_') or name.endswith('_test.py') or name == 'conftest.py'
+
+
+def split_symbol(symbol_name: str) -> tuple[str, str, str]:
+    """`Owner.member[...]` as owner, member and subscript, any of which may be empty.
+
+    The subscript is what a dispatch-table caller prints as, `STEPS['wslconfig']`, so a name
+    pasted back from deps output resolves.
+    """
+    base, bracket, rest = symbol_name.partition('[')
+    owner, _, member = base.rpartition('.')
+    return owner, member, bracket + rest
+
+
+def find_callers(conn: sqlite3.Connection, symbol_name: str, repo: str | None = None) -> list[dict]:
+    """Callers of a bare name, or of `Owner.member` by the qualified rules, with candidates and then tests last.
+
+    The sort is stable, so within each group the rows keep the order the rules matched them in.
+    """
+    owner, member, _ = split_symbol(symbol_name)
+    rows = get_member_callers(conn, owner, member, repo=repo) if owner else get_symbol_callers(conn, member, repo=repo)
+    return sorted(rows, key=lambda row: (row['via'] == 'candidate', is_test_path(row['source_file'])))
+
+
+def find_callees(conn: sqlite3.Connection, symbol_name: str, repo: str | None = None) -> list[dict]:
+    """Calls made inside a symbol. `module.function` is matched as `function` in files named `module`.
+
+    A method's source symbol is `Class.method` already, so an owner that is an indexed class is
+    matched whole.
+    """
+    owner, member, subscript = split_symbol(symbol_name)
+    stem = owner.rpartition('.')[2]
+    if stem and not is_indexed_class(conn, stem):
+        return get_symbol_callees(conn, member + subscript, repo=repo, file_stem=stem)
+    return get_symbol_callees(conn, symbol_name, repo=repo)
+
+
 def get_dependencies(symbol_name: str, repo: str | None = None, direction: str = 'both') -> dict:
     """Return callers and/or callees of a symbol from the reference table.
 
@@ -657,9 +716,9 @@ def get_dependencies(symbol_name: str, repo: str | None = None, direction: str =
     try:
         result: dict = {}
         if direction in ('callers', 'both'):
-            result['callers'] = expand_result_paths(get_symbol_callers(conn, symbol_name, repo=repo), key='source_file')
+            result['callers'] = expand_result_paths(find_callers(conn, symbol_name, repo=repo), key='source_file')
         if direction in ('callees', 'both'):
-            result['callees'] = expand_result_paths(get_symbol_callees(conn, symbol_name, repo=repo), key='source_file')
+            result['callees'] = expand_result_paths(find_callees(conn, symbol_name, repo=repo), key='source_file')
         return result
     finally:
         conn.close()

@@ -1,4 +1,5 @@
 import ast
+import builtins
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
@@ -86,10 +87,10 @@ class Chunk:
 @dataclass
 class Reference:
     source_file: str
-    source_symbol: str | None  # None = module-level (imports, class-level code)
+    source_symbol: str | None  # None = module-level code outside an assignment
     target_symbol: str
-    target_module: str | None  # best-effort: the object/module the symbol is called on
-    ref_type: str  # "call" | "import" | "inherit"
+    target_module: str | None  # best-effort: the receiver's name, or an annotated parameter's class
+    ref_type: str  # "call" | "reference" | "import" | "inherit"
 
 
 FILENAME_LANGUAGES = {'Dockerfile': 'dockerfile'}
@@ -467,6 +468,11 @@ def chunk_treesitter(file_path: str, content: str, repo: str, language: str | No
 
 # ── Reference extraction ──────────────────────────────────────────────────────
 
+# Bump whenever ReferenceExtractor's output changes, so the next index re-extracts unchanged files.
+EXTRACTOR_VERSION = 1
+
+BUILTIN_NAMES = frozenset(dir(builtins))
+
 
 def resolve_attr_name(node: ast.expr) -> tuple[str, str | None]:
     """Return (symbol_name, module_hint) for a Call's func node.
@@ -479,93 +485,201 @@ def resolve_attr_name(node: ast.expr) -> tuple[str, str | None]:
     if isinstance(node, ast.Name):
         return node.id, None
     if isinstance(node, ast.Attribute):
-        module_hint = node.value.id if isinstance(node.value, ast.Name) else None
-        return node.attr, module_hint
+        if isinstance(node.value, ast.Name):
+            return node.attr, node.value.id
+        if isinstance(node.value, ast.Attribute):
+            return node.attr, node.value.attr
+        return node.attr, None
     return '', None
 
 
+def annotated_class(node: ast.expr | None) -> str | None:
+    """The class an annotation names: `Provider`, `mod.Provider`, `'Provider'` or `Provider | None`.
+
+    A capital first letter is the test for a class, which keeps `str` and `int` out.
+    """
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return annotated_class(node.left) or annotated_class(node.right)
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        try:
+            return annotated_class(ast.parse(node.value, mode='eval').body)
+        except (SyntaxError, ValueError):
+            return None
+    if isinstance(node, ast.Name) and node.id[:1].isupper():
+        return node.id
+    if isinstance(node, ast.Attribute) and node.attr[:1].isupper():
+        return node.attr
+    return None
+
+
+def parameters_of(args: ast.arguments) -> list[ast.arg]:
+    return [*args.posonlyargs, *args.args, *args.kwonlyargs, *(arg for arg in (args.vararg, args.kwarg) if arg)]
+
+
 class ReferenceExtractor(ast.NodeVisitor):
-    """Walk a Python AST and collect symbol references with caller context."""
+    """Walk a Python AST and collect symbol references with caller context.
+
+    A name in call position is one `call` row. A name used as any other value is a
+    `reference` row, which is the only trace a function placed in a dispatch table leaves.
+    Names the enclosing function binds, lambda parameters and builtins are skipped, since
+    none of them can name another symbol.
+    """
 
     def __init__(self, file_path: str) -> None:
         self.file_path = file_path
         self.refs: list[Reference] = []
-        self._context: list[str] = []  # class/function name stack
+        self._context: list[str] = []  # class/function names, or a module-level target and its dict keys
+        self._local_names: list[set[str]] = [set()]
+        self._parameter_classes: list[dict[str, str]] = [{}]
+        self._in_module_value = False
 
     @property
     def _current_symbol(self) -> str | None:
-        return '.'.join(self._context) if self._context else None
+        joined = ''
+        for part in self._context:
+            joined += part if not joined or part.startswith('[') else f'.{part}'
+        return joined or None
+
+    def _record(self, target_symbol: str, target_module: str | None, ref_type: str, source_symbol: str | None = None) -> None:
+        self.refs.append(
+            Reference(
+                source_file=self.file_path,
+                source_symbol=source_symbol or self._current_symbol,
+                target_symbol=target_symbol,
+                target_module=target_module,
+                ref_type=ref_type,
+            )
+        )
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
-            self.refs.append(
-                Reference(
-                    source_file=self.file_path,
-                    source_symbol=self._current_symbol,
-                    target_symbol=alias.asname or alias.name,
-                    target_module=None,
-                    ref_type='import',
-                )
-            )
-        self.generic_visit(node)
+            self._record(alias.asname or alias.name, None, 'import')
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        module = node.module or ''
         for alias in node.names:
-            self.refs.append(
-                Reference(
-                    source_file=self.file_path,
-                    source_symbol=self._current_symbol,
-                    target_symbol=alias.asname or alias.name,
-                    target_module=module,
-                    ref_type='import',
-                )
-            )
-        self.generic_visit(node)
+            self._record(alias.asname or alias.name, node.module or '', 'import')
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        qualified_name = '.'.join([*self._context, node.name])
         for base in node.bases:
             name, module_hint = resolve_attr_name(base)
             if name:
-                self.refs.append(
-                    Reference(
-                        source_file=self.file_path,
-                        source_symbol=self._current_symbol,
-                        target_symbol=name,
-                        target_module=module_hint,
-                        ref_type='inherit',
-                    )
-                )
+                self._record(name, module_hint, 'inherit', source_symbol=qualified_name)
+            else:
+                self.visit(base)
         self._context.append(node.name)
-        self.generic_visit(node)
+        for child in [*node.decorator_list, *(keyword.value for keyword in node.keywords), *node.body]:
+            self.visit(child)
         self._context.pop()
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        parameters = parameters_of(node.args)
+        bound = {arg.arg for arg in parameters}
+        bound |= {child.id for child in ast.walk(node) if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)}
+        self._local_names.append(bound | self._local_names[-1])
+        self._parameter_classes.append({arg.arg: cls for arg in parameters if (cls := annotated_class(arg.annotation))})
         self._context.append(node.name)
-        self.generic_visit(node)
+        for annotation in [*(arg.annotation for arg in parameters), node.returns]:
+            self._visit_calls_in(annotation)
+        defaults = [*node.args.defaults, *(default for default in node.args.kw_defaults if default is not None)]
+        for child in [*node.decorator_list, *defaults, *node.body]:
+            self.visit(child)
         self._context.pop()
+        self._parameter_classes.pop()
+        self._local_names.pop()
 
     visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
 
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        self._local_names.append({arg.arg for arg in parameters_of(node.args)} | self._local_names[-1])
+        self.visit(node.body)
+        self._local_names.pop()
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        for target in node.targets:
+            self.visit(target)
+        self._visit_assigned(node.targets[0], node.value)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        self.visit(node.target)
+        self._visit_calls_in(node.annotation)
+        if node.value is not None:
+            self._visit_assigned(node.target, node.value)
+
+    def _visit_calls_in(self, annotation: ast.AST | None) -> None:
+        """A type name in an annotation is no value, but a call inside one runs: `Annotated[str, Option()]`."""
+        if isinstance(annotation, ast.Call):
+            self.visit(annotation)
+        elif annotation is not None:
+            for child in ast.iter_child_nodes(annotation):
+                self._visit_calls_in(child)
+
+    def _visit_assigned(self, target: ast.expr, value: ast.expr) -> None:
+        """At module level the target names the code on the right: `STEPS`, or `STEPS['key']` inside a dict."""
+        if self._context or not isinstance(target, ast.Name):
+            self.visit(value)
+            return
+        self._context.append(target.id)
+        self._in_module_value = True
+        self.visit(value)
+        self._in_module_value = False
+        self._context.pop()
+
+    def visit_Dict(self, node: ast.Dict) -> None:
+        for key, value in zip(node.keys, node.values, strict=True):
+            if self._in_module_value and isinstance(key, ast.Constant) and isinstance(key.value, str):
+                self._context.append(f'[{key.value!r}]')
+                self.visit(value)
+                self._context.pop()
+                continue
+            if key is not None:
+                self.visit(key)
+            self.visit(value)
+
     def visit_Call(self, node: ast.Call) -> None:
-        name, module_hint = resolve_attr_name(node.func)
+        func = node.func
+        name, module_hint = resolve_attr_name(func)
         if name:
-            self.refs.append(
-                Reference(
-                    source_file=self.file_path,
-                    source_symbol=self._current_symbol,
-                    target_symbol=name,
-                    target_module=module_hint,
-                    ref_type='call',
-                )
-            )
-        self.generic_visit(node)
+            receiver = func.value if isinstance(func, ast.Attribute) else None
+            if isinstance(receiver, ast.Name) and receiver.id in self._parameter_classes[-1]:
+                module_hint = self._parameter_classes[-1][receiver.id]
+            self._record(name, module_hint, 'call')
+        # The call row already names the callee and a bare receiver, so neither is visited again.
+        if isinstance(func, ast.Attribute):
+            if not isinstance(func.value, ast.Name):
+                self.visit(func.value)
+        elif not isinstance(func, ast.Name):
+            self.visit(func)
+        for child in [*node.args, *(keyword.value for keyword in node.keywords)]:
+            self.visit(child)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load) and node.id not in self._local_names[-1] and node.id not in BUILTIN_NAMES:
+            self._record(node.id, None, 'reference')
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        """`config.DB_PATH` is a reference to `DB_PATH` hinted `config`, and `config` gets no row of its own.
+
+        A local receiver is hinted only where its class is known: `self.label` by `self`, and
+        `provider.label` by the class `provider` is annotated with. That reaches a property and
+        a bound method passed as a callback. Any other local is skipped as data.
+        """
+        if not isinstance(node.value, ast.Name):
+            self.visit(node.value)
+            return
+        if not isinstance(node.ctx, ast.Load):
+            return
+        receiver = node.value.id
+        if receiver not in self._local_names[-1] or receiver in ('self', 'cls'):
+            self._record(node.attr, receiver, 'reference')
+        elif receiver in self._parameter_classes[-1]:
+            self._record(node.attr, self._parameter_classes[-1][receiver], 'reference')
 
 
 def extract_references(file_path: str, content: str) -> list[Reference]:
-    """Extract symbol references from a Python file.
-    Returns an empty list for non-Python files or files that fail to parse."""
-    if not file_path.endswith('.py'):
+    """Extract symbol references from Python, whether a `.py` file or a script whose shebang runs it.
+    Returns an empty list for anything else, or for a file that fails to parse."""
+    if detect_language(file_path, content) != 'python':
         return []
     try:
         tree = ast.parse(content)

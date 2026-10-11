@@ -106,8 +106,27 @@ ships 14 doc translations, so `docs/*/**` then `!docs/en/**` keeps the 154 Engli
   filter by repo/language in Python.
 - **No git post-commit hook** — an on-demand `indy index`, scheduled or run by hand, covers the
   use case. Per-repo hook management adds maintenance overhead for marginal gain.
-- **symbol_reference is Python-only** — tree-sitter already parses Go/TS/Rust/Lua for chunking;
-  reference extraction for those languages is deferred. Python AST covers the primary use case.
+- **symbol_reference is Python-only, and syntactic** — tree-sitter already parses Go/TS/Rust/Lua
+  for chunking; reference extraction for those languages is deferred. Beside `call`, `import` and
+  `inherit` rows, a name used as any other value is a `reference` row. That is the only trace a
+  function placed in a dispatch table leaves, since nothing calls it by name.
+- **`deps A.b` resolves receivers without a type checker** — it matches a module hint of `A`,
+  which includes a parameter annotated with `A` itself (labeled `call`); `self.b` in `A`, its
+  ancestors, or a subclass that does not override `b`; `.b` on a parameter annotated with one of
+  those other classes (`typed`); and a bare `b` in a file named `A`. A subclass that defines `b`
+  is cut off with everything below it, because its override is a different method. Every caller
+  carries the rule that matched it as `via`. A call of `.b` on an untyped receiver is a
+  `candidate`, listed after every resolved caller and counted apart from them in the header.
+  Matching a method by name alone buries the real caller among every unrelated `.install` in the
+  index. Exact resolution and inferred types are a type checker's job and stay out.
+- **An attribute read through `self`, `cls` or an annotated parameter is a `reference` row** —
+  a property read and a bound method passed as a callback have no other trace. A read through
+  any other local is skipped, since nothing says what class the local holds.
+- **Changing the extractor bumps `EXTRACTOR_VERSION`** — an unchanged file is skipped before it
+  is embedded, so a new extractor would never reach it. A file whose stored version differs has
+  its references re-extracted from the content the scan already read, keeping its vectors. The
+  version is per file rather than per index, because `indy index <repo>` covers one target and
+  a global version would mark every other target current.
 - **Ownership resolved at service layer, not storage** — service.py resolves `--owned`/`--reference`
   into a set of repo names and passes it to storage as a generic filter. Storage knows nothing
   about ownership.

@@ -1,11 +1,15 @@
+import hashlib
 import json
+from dataclasses import astuple
 
 import pytest
 
+from indy.chunker import EXTRACTOR_VERSION
 from indy.chunker import FILENAME_LANGUAGES
 from indy.chunker import LANGUAGE_MAP
 from indy.chunker import chunk_config
 from indy.chunker import chunk_file
+from indy.chunker import extract_references
 from indy.chunker import shebang_language
 from indy.config import CODE_EXTENSIONS
 from indy.config import CODE_FILENAMES
@@ -74,3 +78,69 @@ def test_small_config_is_still_kept_whole():
 
 def test_empty_config_produces_nothing():
     assert chunk_config('empty.yml', '   \n\n', 'indy', 'yaml') == []
+
+
+def test_a_name_used_as_a_value_is_a_reference_row():
+    """A function placed in a dispatch table is never called by name, so a value is its only trace.
+
+    An annotation's type names are not values, and the call inside one still runs.
+    """
+    content = (
+        'def wire(param: Annotated[Kind, option()]):\n'
+        '    local = make()\n'
+        '    register(handler, name=local)\n'
+        '    on_event = lambda event: event\n'
+        '    return [handler, param, local, len, on_event]\n'
+    )
+    refs = [(ref.target_symbol, ref.ref_type) for ref in extract_references('m.py', content)]
+    assert sorted(refs) == [('handler', 'reference'), ('handler', 'reference'), ('make', 'call'), ('option', 'call'), ('register', 'call')]
+
+
+def test_module_level_code_is_attributed_to_its_assignment_target():
+    content = "STEPS: dict = {'wslconfig': (anywhere(check), unprivileged(write_wslconfig))}\nDEFAULT = make()\nHANDLERS[key()] = handler\n"
+    refs = {(ref.source_symbol, ref.target_symbol, ref.ref_type) for ref in extract_references('m.py', content)}
+    assert refs == {
+        ("STEPS['wslconfig']", 'anywhere', 'call'),
+        ("STEPS['wslconfig']", 'check', 'reference'),
+        ("STEPS['wslconfig']", 'unprivileged', 'call'),
+        ("STEPS['wslconfig']", 'write_wslconfig', 'reference'),
+        ('DEFAULT', 'make', 'call'),
+        (None, 'HANDLERS', 'reference'),
+        (None, 'key', 'call'),
+        (None, 'handler', 'reference'),
+    }
+
+
+EVERY_VISITOR = """\
+import os
+from pkg import steps as stages
+
+
+@register(kind='class')
+class Child(base.Base, metaclass=Meta):
+    LIMIT: Annotated[int, bound()] = os.cpu_count()
+
+    @property
+    def label(self) -> Annotated[str, doc()]:
+        return self.name
+
+    async def run(self, provider: 'Provider | None', retries=default()):
+        provider.install(self.label)
+        callback = lambda event: handle(event, provider.timeout)
+        return stages.apply(callback, self.store.load())
+
+
+TABLE = {'run': Child.run, 'other': [helper, config.DEFAULT]}
+TABLE[key()] = lambda: helper()
+"""
+
+
+def test_changing_what_the_extractor_records_needs_a_new_extractor_version():
+    """An unchanged file is re-extracted only when EXTRACTOR_VERSION moves.
+
+    Output that changes under one version leaves every unchanged file on the old rows, and
+    nothing reports it. On failure, bump EXTRACTOR_VERSION and pin the new digest beside it.
+    """
+    rows = sorted(repr(astuple(ref)) for ref in extract_references('m.py', EVERY_VISITOR))
+    digest = hashlib.sha256('\n'.join(rows).encode()).hexdigest()[:16]
+    assert (EXTRACTOR_VERSION, digest) == (1, 'd6969948fa68dc6f')
