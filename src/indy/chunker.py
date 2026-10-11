@@ -1,5 +1,7 @@
 import ast
+from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 try:
@@ -9,19 +11,21 @@ try:
     import tree_sitter_typescript as _tsts
     from tree_sitter import Language as _Language
     from tree_sitter import Node as _Node
+    from tree_sitter import Parser as _Parser
 
-    _TS_LANGUAGES: dict[str, _Language] = {
-        'go': _Language(_tsgo.language()),
-        'lua': _Language(_tslua.language()),
-        'rust': _Language(_tsrust.language()),
-        'typescript': _Language(_tsts.language_typescript()),
-        'tsx': _Language(_tsts.language_tsx()),
+    # Each entry builds a parser, so no tree-sitter name is read outside this branch.
+    _TS_PARSERS: dict[str, Callable[[], _Parser]] = {
+        'go': partial(_Parser, _Language(_tsgo.language())),
+        'lua': partial(_Parser, _Language(_tslua.language())),
+        'rust': partial(_Parser, _Language(_tsrust.language())),
+        'typescript': partial(_Parser, _Language(_tsts.language_typescript())),
+        'tsx': partial(_Parser, _Language(_tsts.language_tsx())),
     }
 except ImportError:
     # An empty table is the whole fallback: every lookup misses and sends the
     # file to chunk_code. A separate availability flag cannot narrow the names
     # this branch leaves unbound, which is how the NameError hid here.
-    _TS_LANGUAGES = {}
+    _TS_PARSERS = {}
 
 from indy.config import CODE_CHUNK_OVERLAP
 from indy.config import CODE_CHUNK_SIZE
@@ -447,17 +451,12 @@ def chunk_treesitter(file_path: str, content: str, repo: str, language: str | No
     Falls back to recursive code splitter if tree-sitter packages are not installed."""
     # .tsx files share the 'typescript' language label but need the tsx grammar
     lang_key = 'tsx' if file_path.endswith('.tsx') else language
-    ts_language = _TS_LANGUAGES.get(lang_key or '')
-    if ts_language is None:
+    new_parser = _TS_PARSERS.get(lang_key or '')
+    if new_parser is None:
         return chunk_code(file_path, content, repo, language)
 
-    # Imported here rather than above: a hit in _TS_LANGUAGES is proof the
-    # package imported, which a module-level name would not carry to either
-    # type checker.
-    from tree_sitter import Parser
-
     extract_types = _TS_EXTRACT_TYPES.get(lang_key or '', set())
-    parser = Parser(ts_language)
+    parser = new_parser()
     tree = parser.parse(bytes(content, 'utf-8'))
 
     chunks: list[Chunk] = []
