@@ -1,14 +1,17 @@
 """Pure SQLite + sqlite-vec access layer. No business logic lives here."""
 
+import hashlib
+import json
 import os
 import sqlite3
+from collections.abc import Collection
 from pathlib import Path
 
 import sqlite_vec
 
 from indy.config import DB_PATH
 from indy.config import EMBEDDING_DIM
-from indy.config import OVERLAY_PATH
+from indy.config import OVERLAY_DIR
 from indy.config import WORKING_DB_PATH
 
 # `indy watch` and the compaction after a full index both write the overlay.
@@ -225,7 +228,8 @@ def init_overlay_schema(conn: sqlite3.Connection) -> None:
 
         CREATE TABLE IF NOT EXISTS overlay_state (
             id         INTEGER PRIMARY KEY CHECK (id = 1),
-            updated_at TEXT NOT NULL
+            updated_at TEXT,
+            base_stamp TEXT
         );
         """
     )
@@ -233,16 +237,39 @@ def init_overlay_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def overlay_path() -> Path:
+    """The overlay belonging to the index at DB_PATH, named by that index's resolved path.
+
+    One per index, so a read or an index run under INDY_DIR or another data_dir never sees the
+    overlay of the index this machine usually reads.
+    """
+    return OVERLAY_DIR / f'{hashlib.sha256(str(DB_PATH.resolve()).encode()).hexdigest()[:16]}.db'
+
+
+def base_stamp() -> str | None:
+    """Which file is at DB_PATH now, as inode, size and mtime, or None when there is none.
+
+    The base is only ever replaced whole, by a rename here or by a syncer delivering a copy,
+    and either one changes the stamp. So a stamp names one base.
+    """
+    try:
+        st = DB_PATH.stat()
+    except FileNotFoundError:
+        return None
+    return f'{st.st_ino}:{st.st_size}:{st.st_mtime_ns}'
+
+
 def open_overlay_db() -> sqlite3.Connection:
-    """Open this machine's overlay for writing, creating it on first use.
+    """Open the overlay for writing, creating it on first use.
 
     WAL and written in place, which the base must never be. That is safe here and only here
-    because the overlay lives outside data_dir, so nothing replicates it: the property that
+    because the overlay lives in the cache directory, which nothing replicates: the property that
     corrupted the synced index was a file changing under a syncer, and no syncer reads this one.
     Opened as a URI so compaction can attach the base read-only beside it.
     """
-    OVERLAY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(file_uri(OVERLAY_PATH), uri=True, timeout=OVERLAY_BUSY_SECONDS)
+    path = overlay_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(file_uri(path), uri=True, timeout=OVERLAY_BUSY_SECONDS)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA journal_mode=WAL')
     load_vec_extension(conn)
@@ -288,24 +315,31 @@ OVERLAY_VIEWS = """
 
 
 def attach_overlay(conn: sqlite3.Connection) -> None:
-    """Lay this machine's overlay over a read connection to the base, if there is one.
+    """Lay the overlay over a read connection to the base, if it was last reconciled with this base.
 
     For any file the overlay holds, as rows or as a tombstone, the base's rows for that path
-    are hidden. A machine with no overlay, which is every machine but the one running
-    `indy watch`, reads the base exactly as before. Read-only like the base itself.
+    are hidden. An overlay reconciled with a different base is attached but not laid over this
+    one. Its rows were compared with an index that has since been replaced, so they could hide
+    newer content, and get_overlay_summary reports them set aside instead. A machine with no
+    overlay reads the base exactly as before. Read-only like the base itself.
     """
-    if not OVERLAY_PATH.exists():
+    path = overlay_path()
+    if not path.exists():
         return
-    conn.execute('ATTACH DATABASE ? AS overlay', (file_uri(OVERLAY_PATH, 'ro'),))
-    conn.executescript(OVERLAY_VIEWS)
-
-
-def overlay_path() -> Path:
-    return OVERLAY_PATH
+    conn.execute('ATTACH DATABASE ? AS overlay', (file_uri(path, 'ro'),))
+    reconciled = conn.execute('SELECT base_stamp FROM overlay.overlay_state').fetchone()
+    if reconciled is not None and reconciled[0] == base_stamp():
+        conn.executescript(OVERLAY_VIEWS)
 
 
 def has_overlay(conn: sqlite3.Connection) -> bool:
+    """Whether an overlay is attached, laid over the base or not."""
     return any(row[1] == 'overlay' for row in conn.execute('PRAGMA database_list'))
+
+
+def overlay_applied(conn: sqlite3.Connection) -> bool:
+    """Whether reads on this connection see the overlay's rows in place of the base's."""
+    return conn.execute("SELECT 1 FROM temp.sqlite_master WHERE type = 'view' AND name = 'shadowed'").fetchone() is not None
 
 
 def get_tombstone(conn: sqlite3.Connection, file_path: str) -> dict | None:
@@ -351,6 +385,19 @@ def mark_overlay_updated(conn: sqlite3.Connection, updated_at: str) -> None:
     )
 
 
+def get_reconciled_stamp(conn: sqlite3.Connection) -> str | None:
+    """The stamp of the base this overlay was last compacted against."""
+    row = conn.execute('SELECT base_stamp FROM overlay_state').fetchone()
+    return row[0] if row else None
+
+
+def record_reconciled_stamp(conn: sqlite3.Connection, stamp: str | None) -> None:
+    conn.execute(
+        'INSERT INTO overlay_state (id, base_stamp) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET base_stamp = excluded.base_stamp',
+        (stamp,),
+    )
+
+
 def get_chunk_vectors(conn: sqlite3.Connection, file_path: str) -> dict[str, bytes]:
     """Each of a file's chunks as text mapped to its stored embedding, from one store."""
     rows = conn.execute(
@@ -371,6 +418,14 @@ def get_file_states(conn: sqlite3.Connection, prefix: str) -> dict[str, tuple[st
 
 def get_tombstoned_paths(conn: sqlite3.Connection, prefix: str) -> set[str]:
     return {row[0] for row in conn.execute('SELECT file_path FROM tombstone WHERE substr(file_path, 1, ?) = ?', (len(prefix), prefix))}
+
+
+def get_paths_extracted_by_another_version(conn: sqlite3.Connection, prefix: str, version: int) -> set[str]:
+    """Files under a prefix whose references some other extractor version produced."""
+    rows = conn.execute(
+        'SELECT file_path FROM indexed_file WHERE extractor_version != ? AND substr(file_path, 1, ?) = ?', (version, len(prefix), prefix)
+    )
+    return {row[0] for row in rows}
 
 
 def get_overlay_paths(conn: sqlite3.Connection, prefix: str) -> list[str]:
@@ -403,19 +458,30 @@ def delete_overlay_label(conn: sqlite3.Connection, repo: str) -> int:
     return len(paths)
 
 
-def compact_overlay(conn: sqlite3.Connection) -> dict:
-    """Drop every overlay row the base at DB_PATH now holds the same or newer content for.
+def compact_overlay(conn: sqlite3.Connection, read_here: Collection[str] = ()) -> dict:
+    """Drop every overlay row the base at DB_PATH holds the same content for, and record that base as reconciled.
 
-    Newer by the file's mtime when it was read, which covers a save made while `indy watch`
-    was down: the run embedded it and the overlay's older row would otherwise shadow it. A row
-    the run read an older version of stays. A tombstone stays while the base still holds its
-    path, and goes once the run has pruned it. Worktree rows always stay, because no full
-    index covers a worktree.
+    Under the labels in read_here, a row also goes when the base read its file at the same or
+    a later mtime. That covers a save made while `indy watch` was down, which the run embedded
+    and the overlay's older row would otherwise shadow. read_here names only labels this
+    machine just indexed, where both mtimes come from this machine's files. Any other row may
+    have been read from another machine's copy, so comparing its mtime could drop a save the
+    base does not hold.
 
+    A tombstone stays while the base still holds its path, and goes once a run has pruned it.
+    Worktree rows always stay, because no full index covers a worktree.
+
+    The stamp is taken before the base is attached. A base replaced in between is then the one
+    compared, under the older stamp, and the next reconcile compares again rather than never.
     One write transaction, so a save landing mid-compaction is never deleted: `indy watch`
     writes the new content either before the comparison reads it or after the deletes commit.
     """
+    stamp = base_stamp()
     conn.commit()
+    if stamp is None:
+        record_reconciled_stamp(conn, None)
+        conn.commit()
+        return {'files': 0, 'tombstones': 0}
     conn.execute('ATTACH DATABASE ? AS base', (file_uri(DB_PATH, 'ro'),))
     try:
         conn.execute('BEGIN IMMEDIATE')
@@ -425,13 +491,17 @@ def compact_overlay(conn: sqlite3.Connection) -> dict:
                 """
                 SELECT o.file_path FROM main.indexed_file o
                 JOIN base.indexed_file b ON b.file_path = o.file_path
-                WHERE o.branch IS NULL AND b.status = 'ok' AND (b.content_hash = o.content_hash OR b.mtime >= o.mtime)
-                """
+                WHERE o.branch IS NULL AND b.status = 'ok' AND (
+                    b.content_hash = o.content_hash OR (b.repo IN (SELECT value FROM json_each(?)) AND b.mtime >= o.mtime)
+                )
+                """,
+                (json.dumps(sorted(read_here)),),
             )
         ]
         for path in covered:
             clear_overlay_file(conn, path)
         buried = conn.execute('DELETE FROM main.tombstone WHERE file_path NOT IN (SELECT file_path FROM base.indexed_file)').rowcount
+        record_reconciled_stamp(conn, stamp)
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -442,7 +512,7 @@ def compact_overlay(conn: sqlite3.Connection) -> dict:
 
 
 def get_overlay_summary(conn: sqlite3.Connection, scope: set[str] | None = None) -> dict | None:
-    """How many files the attached overlay holds within scope, and when it was last written."""
+    """How many files the attached overlay holds within scope, when it was last written, and whether reads apply it."""
     if not has_overlay(conn):
         return None
     labels = [row[0] for row in conn.execute('SELECT repo FROM overlay.indexed_file UNION ALL SELECT repo FROM overlay.tombstone')]
@@ -450,6 +520,7 @@ def get_overlay_summary(conn: sqlite3.Connection, scope: set[str] | None = None)
     return {
         'files': sum(1 for label in labels if scope is None or label in scope),
         'updated_at': updated[0] if updated else None,
+        'applied': overlay_applied(conn),
     }
 
 
@@ -546,7 +617,7 @@ def search_chunks(
     query = sqlite_vec.serialize_float32(embedding)
 
     hits = nearest_chunk_ids(conn, 'main', query, candidate_limit)
-    if has_overlay(conn):
+    if overlay_applied(conn):
         hits = sorted(hits + nearest_chunk_ids(conn, 'overlay', query, candidate_limit))
 
     results = []

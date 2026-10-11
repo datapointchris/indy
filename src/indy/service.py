@@ -4,11 +4,13 @@ The CLI is a thin wrapper around these functions."""
 import datetime as dt
 import filecmp
 import hashlib
+import heapq
 import sqlite3
 import subprocess
 import threading
 import time
 from collections.abc import Callable
+from collections.abc import Collection
 from collections.abc import Iterator
 from contextlib import closing
 from contextlib import contextmanager
@@ -49,6 +51,7 @@ from indy.repos import get_owned_repo_names
 from indy.repos import get_target_by_name
 from indy.repos import is_excluded
 from indy.storage import IndexNotFoundError
+from indy.storage import base_stamp
 from indy.storage import clear_overlay_file
 from indy.storage import commit_working_db
 from indy.storage import compact_overlay
@@ -71,8 +74,10 @@ from indy.storage import get_last_scans
 from indy.storage import get_member_callers
 from indy.storage import get_overlay_paths
 from indy.storage import get_overlay_summary
+from indy.storage import get_paths_extracted_by_another_version
 from indy.storage import get_read_db
 from indy.storage import get_recent_runs
+from indy.storage import get_reconciled_stamp
 from indy.storage import get_repo_file_paths
 from indy.storage import get_repo_scan_history
 from indy.storage import get_symbol_callees
@@ -221,6 +226,7 @@ class IndexSession:
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
+        self.indexed_labels: set[str] = set()
 
     def index_path(
         self,
@@ -229,6 +235,7 @@ class IndexSession:
         on_progress: ProgressCallback | None = None,
         exclude: tuple[str, ...] = (),
     ) -> dict:
+        self.indexed_labels.add(repo_name)
         return index_into(self._conn, root, repo_name, on_progress=on_progress, exclude=exclude)
 
     def clear_errors(self) -> int:
@@ -257,16 +264,19 @@ def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[Ind
     doing rather than for the copy and rename that implement it, since the caller announcing
     them is writing for someone watching an index, not reading this file.
 
-    Once the new index is in place, the overlay drops every file it now matches.
+    Once the new index is in place, the overlay drops every file it now matches. Under the
+    labels this session indexed that includes a file read at the same or a later mtime, since
+    this machine just read those files itself.
     """
     if on_stage:
         on_stage('snapshot')
     conn = open_working_db()
+    session = IndexSession(conn)
     try:
-        yield IndexSession(conn)
+        yield session
     except KeyboardInterrupt:
         commit_working_db(conn)
-        compact_live_overlay()
+        compact_live_overlay(session.indexed_labels)
         raise
     except BaseException:
         discard_working_db(conn)
@@ -274,7 +284,7 @@ def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[Ind
     if on_stage:
         on_stage('save')
     commit_working_db(conn)
-    compact_live_overlay()
+    compact_live_overlay(session.indexed_labels)
 
 
 def prune_missing_files(conn: sqlite3.Connection, repo_name: str, root: Path) -> int:
@@ -526,8 +536,16 @@ def index_all(
 
 # ── live overlay ──────────────────────────────────────────────────────────────
 
-# ollama unloads a model five minutes after its last request unless told otherwise.
+# Each warm request asks ollama to keep the model loaded for ten minutes, so a ping every
+# four keeps it resident with margin.
 KEEP_WARM_SECONDS = 240
+
+BASE_POLL_SECONDS = 2.0
+
+# A file whose update raised is tried again after this, doubling each time, until the wait
+# would pass RETRY_LAST_SECONDS. An ollama restart is the case it is for.
+RETRY_FIRST_SECONDS = 2.0
+RETRY_LAST_SECONDS = 300.0
 
 
 @dataclass(frozen=True)
@@ -582,7 +600,7 @@ def list_worktrees(checkout: Path) -> list[tuple[Path, str]]:
 def live_roots() -> list[LiveRoot]:
     """Every root `indy watch` keeps current: each target but the exemplar clones, and each owned repo's worktrees.
 
-    Exemplars change only when pulled, which the nightly full index covers.
+    Exemplars change only when pulled, which a full `indy index` covers.
     """
     roots = []
     for target in all_index_targets():
@@ -678,7 +696,11 @@ def update_overlay(conn: sqlite3.Connection, path: Path, root: LiveRoot) -> Live
 
     Only chunks whose text is new are embedded. Every other chunk reuses the vector already
     stored for that text — in the overlay, in the base, or for a worktree in the main
-    checkout's rows — since an embedding depends on nothing but the text.
+    checkout's rows — since an embedding depends only on its text and the model.
+
+    A file held at the same content is left alone unless another extractor version produced
+    its references, in which case its rows are rewritten from the stored vectors. A worktree's
+    file is still compared with the main checkout's first, since that copy can change to match.
     """
     db_path = compact_path(str(path))
     try:
@@ -693,7 +715,8 @@ def update_overlay(conn: sqlite3.Connection, path: Path, root: LiveRoot) -> Live
 
     content_hash = compute_content_hash(content)
     held = get_indexed_file(conn, db_path)
-    if held and held['content_hash'] == content_hash:
+    current = held is not None and held['content_hash'] == content_hash and held['extractor_version'] == EXTRACTOR_VERSION
+    if current and root.checkout is None:
         return None
 
     twin = root.checkout / path.relative_to(root.path) if root.checkout else None
@@ -705,9 +728,10 @@ def update_overlay(conn: sqlite3.Connection, path: Path, root: LiveRoot) -> Live
             unchanged = baseline is not None and baseline['content_hash'] == content_hash
         else:
             unchanged = twin.is_file() and compute_content_hash(read_text(twin)) == content_hash
-        for vector_path in vector_paths:
-            vectors |= get_chunk_vectors(base, vector_path) if base else {}
-            vectors |= get_chunk_vectors(conn, vector_path)
+        if not (unchanged or current):
+            for vector_path in vector_paths:
+                vectors |= get_chunk_vectors(base, vector_path) if base else {}
+                vectors |= get_chunk_vectors(conn, vector_path)
 
     if unchanged:
         if not clear_overlay_file(conn, db_path):
@@ -715,6 +739,8 @@ def update_overlay(conn: sqlite3.Connection, path: Path, root: LiveRoot) -> Live
         mark_overlay_updated(conn, dt.datetime.now(dt.UTC).isoformat())
         conn.commit()
         return LiveChange(db_path, root.label, root.branch, 'restored')
+    if current:
+        return None
 
     chunks = chunk_file(db_path, content, root.label)
     embedded = 0
@@ -770,6 +796,9 @@ def stale_live_paths(root: LiveRoot) -> list[Path]:
     byte-identical to the main checkout's is never queued, which is almost all of them. A
     tombstoned file that is back on disk is queued, since its mtime can match the base's.
 
+    A file the overlay holds under another extractor version is queued to have its references
+    extracted again.
+
     Nothing on a machine with no base yet. The first full index builds that, and catching up
     against an empty base would embed the whole corpus into the overlay instead.
     """
@@ -784,10 +813,15 @@ def stale_live_paths(root: LiveRoot) -> list[Path]:
     with closing(open_overlay_db()) as overlay:
         known |= get_file_states(overlay, prefix)
         buried = get_tombstoned_paths(overlay, prefix)
+        outdated = get_paths_extracted_by_another_version(overlay, prefix, EXTRACTOR_VERSION)
 
     stale = []
     for path in files:
-        state = known.get(compact_path(str(path)))
+        db_path = compact_path(str(path))
+        if db_path in outdated:
+            stale.append(path)
+            continue
+        state = known.get(db_path)
         try:
             if state is not None and state[1] == path.stat().st_mtime:
                 continue
@@ -803,12 +837,15 @@ def stale_live_paths(root: LiveRoot) -> list[Path]:
     return stale + gone + revived
 
 
-def compact_live_overlay() -> dict | None:
-    """Drop what the overlay holds that the base now matches. None on a machine with no overlay."""
+def compact_live_overlay(read_here: Collection[str] = ()) -> dict | None:
+    """Drop what the overlay holds that the base now matches. None where the index has no overlay.
+
+    read_here names the labels this machine just indexed, as storage.compact_overlay takes them.
+    """
     if not overlay_path().exists():
         return None
     with closing(open_overlay_db()) as conn:
-        return compact_overlay(conn)
+        return compact_overlay(conn, read_here)
 
 
 def warm_model() -> None:
@@ -834,9 +871,17 @@ def watch(
     """Keep the overlay current with every save under every live root, until stop is set.
 
     The calling thread watches the filesystem and queues each changed path, newest first. One
-    worker thread indexes the queue a file at a time. A second walks every root once at the
-    start to queue what changed while nothing was watching, behind any live save. A third
-    keeps the model loaded, so the first save after a quiet hour does not wait for it.
+    worker thread indexes the queue a file at a time. A file whose update raised goes back on
+    the queue after a backoff. A save in a main checkout also queues the same file in each of
+    its linked worktrees, which are held only while they differ from it.
+
+    A second thread walks every root to queue what changed while nothing was watching, behind
+    any live save. It walks them once the watch has registered every directory, at the start
+    and after every restart of the watch, because a change made before then raised no event.
+    It also compacts the overlay whenever a new base replaces the one it was reconciled with,
+    whether this machine built it or a syncer delivered it. Then it walks every root again,
+    since the new base may hold another machine's copy of a file. A third thread keeps the
+    model loaded, so the first save after a quiet hour does not wait for it.
 
     A worktree being added, removed or switched lists the roots again. When they differ, a
     removed worktree's rows are dropped, a switched one's relabeled, and the watch restarts
@@ -844,16 +889,22 @@ def watch(
     """
     queue = WorkQueue()
     current = {'roots': live_roots()}
+    catch_up_due = threading.Event()
 
     def describe(roots: list[LiveRoot]) -> str:
         worktrees = sum(1 for root in roots if root.branch is not None)
         return f'{len(roots) - worktrees} roots and {worktrees} worktrees'
 
     def drain() -> None:
+        attempts: dict[Path, int] = {}
+        retries: list[tuple[float, Path]] = []
         with closing(open_overlay_db()) as conn:
             while not stop.is_set():
+                while retries and retries[0][0] <= time.monotonic():
+                    queue.push_newest([heapq.heappop(retries)[1]])
                 path = queue.pop(timeout=0.5)
-                root = root_for(path, current['roots']) if path else None
+                roots = current['roots']
+                root = root_for(path, roots) if path else None
                 if path is None or root is None:
                     continue
                 started = time.perf_counter()
@@ -861,10 +912,41 @@ def watch(
                     change = update_overlay(conn, path, root)
                 except Exception as exc:
                     conn.rollback()
-                    on_problem(f'{compact_path(str(path))}: {exc}')
+                    tries = attempts.get(path, 0) + 1
+                    delay = RETRY_FIRST_SECONDS * 2 ** (tries - 1)
+                    if delay > RETRY_LAST_SECONDS:
+                        attempts.pop(path, None)
+                        on_problem(f'{compact_path(str(path))}: {exc}. Left as it is until it changes again.')
+                    else:
+                        attempts[path] = tries
+                        heapq.heappush(retries, (time.monotonic() + delay, path))
+                        on_problem(f'{compact_path(str(path))}: {exc}. Trying again in {delay:.0f}s.')
                     continue
+                attempts.pop(path, None)
                 if change:
                     on_change(replace(change, seconds=time.perf_counter() - started))
+                if root.branch is None:
+                    relative = path.relative_to(root.path)
+                    queue.push_newest([tree.path / relative for tree in roots if tree.checkout == root.path])
+
+    def reconcile() -> None:
+        starting = True
+        with closing(open_overlay_db()) as conn:
+            while not stop.is_set():
+                if base_stamp() != get_reconciled_stamp(conn):
+                    try:
+                        dropped = compact_overlay(conn)
+                    except Exception as exc:
+                        on_problem(f'reconciling the overlay with the index: {exc}')
+                    else:
+                        on_note(f'Reconciled with the index: dropped {dropped["files"]} files and {dropped["tombstones"]} deletions')
+                        # At the start, the catch-up after registration already walks every root.
+                        if not starting:
+                            catch_up_due.set()
+                starting = False
+                if catch_up_due.wait(BASE_POLL_SECONDS):
+                    catch_up_due.clear()
+                    catch_up(current['roots'])
 
     def catch_up(roots: list[LiveRoot]) -> None:
         for root in roots:
@@ -888,18 +970,25 @@ def watch(
             stop.wait(KEEP_WARM_SECONDS)
 
     on_note(f'Watching {describe(current["roots"])}. Overlay: {overlay_path()}')
+    # Created before any thread opens it. Two connections creating it at once race to switch
+    # it to WAL and to add its columns, and the loser raises.
+    open_overlay_db().close()
     worker = threading.Thread(target=drain, name='indy-watch-index', daemon=True)
     for thread in (
         worker,
         threading.Thread(target=keep_warm, daemon=True),
-        threading.Thread(target=catch_up, args=(current['roots'],), daemon=True),
+        threading.Thread(target=reconcile, daemon=True),
     ):
         thread.start()
 
     try:
         while not stop.is_set():
             roots = current['roots']
+            registered = False
             for batch in watch_changes([root.path for root in roots], accepts_live_event(roots), stop):
+                if not registered:
+                    registered = True
+                    catch_up_due.set()
                 by_root: dict[Path, list[Path]] = {}
                 for path in batch:
                     root = root_for(path, roots)
@@ -910,7 +999,7 @@ def watch(
                 if any(is_worktree_event(path) for path in batch):
                     fresh = live_roots()
                     if fresh != roots:
-                        reconcile_worktrees(roots, fresh, catch_up, on_note)
+                        reconcile_worktrees(roots, fresh, on_note)
                         current['roots'] = fresh
                         on_note(f'Watching {describe(fresh)}')
                         break
@@ -929,10 +1018,8 @@ def accepts_live_event(roots: list[LiveRoot]) -> Callable[[Path], bool]:
     return accepts
 
 
-def reconcile_worktrees(
-    before: list[LiveRoot], after: list[LiveRoot], catch_up: Callable[[list[LiveRoot]], None], on_note: Callable[[str], None]
-) -> None:
-    """Bring the overlay's worktree rows in line with a new list of roots, and catch up the worktrees it added."""
+def reconcile_worktrees(before: list[LiveRoot], after: list[LiveRoot], on_note: Callable[[str], None]) -> None:
+    """Bring the overlay's worktree rows in line with a new list of roots. The catch-up after the restart covers what it added."""
     was = {root.path: root for root in before if root.branch is not None}
     now = {root.path: root for root in after if root.branch is not None}
     with closing(open_overlay_db()) as conn:
@@ -943,9 +1030,6 @@ def reconcile_worktrees(
             if branch is not None and branch != was[path].branch:
                 set_overlay_branch(conn, compact_path(str(path)).rstrip('/') + '/', branch)
                 conn.commit()
-    added = [now[path] for path in now.keys() - was.keys()]
-    if added:
-        threading.Thread(target=catch_up, args=(added,), daemon=True).start()
 
 
 def expand_result_paths(results: list[dict], key: str = 'file_path') -> list[dict]:
@@ -1235,6 +1319,7 @@ def describe_config() -> dict:
         describe_setting('exemplar_registry', str(EXEMPLAR_REGISTRY), 'INDY_EXEMPLAR_REGISTRY', 'exemplar_registry'),
         describe_setting('ollama_host', OLLAMA_HOST, 'OLLAMA_HOST', 'ollama_host'),
         describe_setting('ollama_model', OLLAMA_MODEL, 'OLLAMA_MODEL', 'ollama_model'),
+        {'name': 'overlay', 'value': str(overlay_path()), 'source': 'derived from data_dir', 'exists': overlay_path().exists()},
     ]
     return {
         'config_file': str(CONFIG_PATH),

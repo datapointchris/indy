@@ -329,6 +329,9 @@ def describe_freshness(freshness: dict) -> str:
     live = freshness.get('overlay')
     if live is None:
         return scanned
+    if not live['applied'] and live['files']:
+        held = f'{live["files"]} saved file{"" if live["files"] == 1 else "s"}'
+        return f'{scanned} Live: {held} set aside until `indy watch` reconciles the overlay with this index.'
     files = f'{live["files"]} file{"" if live["files"] == 1 else "s"} newer than the scan'
     updated = f', updated {format_age(live["age_seconds"])} ago' if 'age_seconds' in live else ''
     return f'{scanned} Live: {files}{updated}.'
@@ -367,7 +370,7 @@ def print_index_result(result: dict) -> None:
 
 
 @indy_app.command('errors')
-def errors():
+def errors() -> None:
     """Show all indexing errors, grouped by repo with per-file details."""
     stats = service.get_status()
     error_details = stats.get('error_file_details', [])

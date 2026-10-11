@@ -1,9 +1,9 @@
 """Constants, XDG base directories, and the user's config file.
 
-Every path indy reads or writes resolves the same way: an environment variable, then a
-key in config.toml, then a tool-owned default. No default names a directory outside
-indy's own XDG dirs — where a repo registry lives, or which loose directories are worth
-indexing, is a property of the machine and belongs in config.toml.
+Every path indy reads or writes resolves the same way, or is derived from one that does: an
+environment variable, then a key in config.toml, then a tool-owned default. No default names
+a directory outside indy's own XDG dirs — where a repo registry lives, or which loose
+directories are worth indexing, is a property of the machine and belongs in config.toml.
 
 Three rungs, and no path indy resolves is named by a variable indy does not own. A shared
 variable naming the registry for every tool at once used to sit between the config key and
@@ -32,7 +32,7 @@ def xdg_base(env_var: str, *fallback: str) -> Path:
 
 CONFIG_HOME = xdg_base('XDG_CONFIG_HOME', '.config')
 DATA_HOME = xdg_base('XDG_DATA_HOME', '.local', 'share')
-STATE_HOME = xdg_base('XDG_STATE_HOME', '.local', 'state')
+CACHE_HOME = xdg_base('XDG_CACHE_HOME', '.cache')
 
 CONFIG_DIR = CONFIG_HOME / 'indy'
 CONFIG_PATH = CONFIG_DIR / 'config.toml'
@@ -146,10 +146,11 @@ LOG_PATH = INDY_DIR / 'indy.log'
 # and that atomicity is the point — see storage.open_working_db().
 WORKING_DB_PATH = INDY_DIR / 'indy.db.building'
 
-# What `indy watch` writes each save into, read alongside DB_PATH. Deliberately not under
-# data_dir: that directory is the one a syncer replicates, and the overlay is written in
-# place, which is the thing a replicated file must never be. See storage.attach_overlay().
-OVERLAY_PATH = STATE_HOME / 'indy' / 'overlay.db'
+# Where `indy watch` keeps the overlay it writes each save into, one file per index, named by
+# storage.overlay_path() from the index's own path so that moving the index moves its overlay.
+# Cache: losing it costs one catch-up. Cache is also the directory nothing replicates, and the
+# overlay is written in place, which a replicated file must never be. See storage.attach_overlay().
+OVERLAY_DIR = CACHE_HOME / 'indy' / 'overlays'
 
 # Registry locations default to indy-owned paths. Sharing one registry with other tools
 # is an arrangement between those tools, so it belongs in config.toml on the machines

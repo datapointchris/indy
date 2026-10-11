@@ -16,6 +16,9 @@ from watchfiles import watch
 # temporary file and renames it over the original, and both land well inside this.
 QUIET_MS = 300
 
+# How long a watch waits for an event before handing over an empty batch instead.
+IDLE_MS = 1000
+
 
 class WorkQueue:
     """Paths waiting to be indexed, each at most once, newest first.
@@ -57,12 +60,17 @@ def watch_changes(roots: list[Path], keep: Callable[[Path], bool], stop: threadi
     """Each batch of changed paths under roots that keep accepts, until stop is set.
 
     A batch is handed over once QUIET_MS pass with no further event, so a save is one batch.
+    An empty batch is handed over after IDLE_MS with none. The first batch of either kind
+    comes only once every directory under roots is registered, which can take many seconds
+    over a large tree. From then on no change is missed, and a change before then may be.
     """
     batches = watch(
         *roots,
         watch_filter=lambda _change, path: keep(Path(path)),
         step=QUIET_MS,
         stop_event=stop,
+        rust_timeout=IDLE_MS,
+        yield_on_timeout=True,
         ignore_permission_denied=True,
     )
     for changes in batches:

@@ -42,7 +42,8 @@ today is absent from an index scanned last week and a flat "no symbol named X" c
 told from one that does not exist. The number quoted is the *oldest* scan the read could
 have matched, not the newest: indexing one repo makes the newest minutes old while every
 other label stays where it was. Where `indy watch` is running, the line also says how many
-files are newer than the scan, and when the watcher last wrote.
+files are newer than the scan, and when the watcher last wrote. Where the index was replaced
+after the watcher last compared its saves with it, the line says those saves are set aside.
 
 ## Live indexing
 
@@ -56,9 +57,11 @@ It watches every registered repo and extra path, and the linked worktrees of eac
 differs from the main checkout, and each result from one shows `@branch`. Exemplar clones
 are left to `indy index`.
 
-The overlay lives at `$XDG_STATE_HOME/indy/overlay.db`, outside the data directory, so a
-setup that syncs the index never carries it. A full `indy index` rebuilds the index and then
-drops from the overlay every file it now holds, so pair the watcher with a scheduled run.
+Each index has its own overlay under `$XDG_CACHE_HOME/indy/overlays/`, outside the data
+directory, so a setup that syncs the index never carries it. `indy config show` prints its
+path. The overlay is compacted against the index whenever a new one is built or arrives,
+and every file the index now holds drops out of it. Until that happens, a read sets the
+overlay aside and says so, rather than letting older saves hide the newer index.
 
 ## Configuration
 
@@ -156,7 +159,8 @@ main.py        Thin Typer CLI wrappers over service.py
 ## Data
 
 - Index: `$XDG_DATA_HOME/indy/indy.db` (override with `data_dir` or `INDY_DIR`)
-- Live overlay: `$XDG_STATE_HOME/indy/overlay.db`, written only by `indy watch`
+- Live overlay: one file per index under `$XDG_CACHE_HOME/indy/overlays/`, written only by
+  `indy watch`; `indy config show` prints its path
 - Embeddings: ollama `nomic-embed-text` at `http://localhost:11434`
 
 Chunk paths are stored `~`-relative, so one index file is portable across machines

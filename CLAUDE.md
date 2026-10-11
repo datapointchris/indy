@@ -11,8 +11,10 @@ The database is `$XDG_DATA_HOME/indy/indy.db`. Override the data dir with `data_
 config.toml or the `INDY_DIR` env var.
 
 A read sees two stores. The base is `DB_PATH`, on every machine, whether this machine built
-it or a syncer delivered it. The overlay is `$XDG_STATE_HOME/indy/overlay.db`, which exists
-only on a machine running `indy watch` and holds each save made since the base was built.
+it or a syncer delivered it. The overlay holds each save made since the base was built, and
+exists only where `indy watch` has run. It is a file under `$XDG_CACHE_HOME/indy/overlays/`
+named from `DB_PATH`'s resolved path, so each index has its own, and `INDY_DIR` or
+`data_dir` moves the overlay along with the index.
 
 **For any file the overlay holds, as rows or as a tombstone, the base's rows are hidden.**
 `get_read_db` attaches the overlay and creates temp views named `chunk`, `indexed_file` and
@@ -23,13 +25,24 @@ a vec0 MATCH needs the virtual table itself, so `search_chunks` runs KNN on each
 merges by distance. A machine with no overlay attaches nothing and reads the base as before.
 
 **The overlay is written in place, and that is safe only because nothing syncs it.** It
-lives outside `data_dir`, which is the directory a syncer replicates. Everything below about
-never writing `indy.db` is about a file under a syncer, and the overlay is never under one.
+lives in the cache directory, never under `data_dir`, which is the directory a syncer
+replicates. Everything below about never writing `indy.db` is about a file under a syncer,
+and the overlay is never under one.
+
+**An overlay applies only over the base it was reconciled with.** It records the stamp of
+the base it was last compacted against: inode, size and mtime, which every replacement
+changes. A read whose base carries another stamp attaches the overlay without laying it
+over, and its freshness line says the saves are set aside. That is the state on a machine
+whose base a syncer just replaced. Its saves were compared with an index that is gone, so
+they could hide newer content. A running `indy watch` sees the new stamp within seconds,
+compacts by content hash, and walks every root again.
 
 **A full index takes back what it covers.** After a session swaps in a new base, the
-overlay drops every row whose content the base now holds, or whose file the base read at
-the same or a later mtime, and every tombstone whose path the run pruned. Linked worktree
-rows stay, because no full index walks a worktree.
+overlay drops every row whose content the base now holds, and every tombstone whose path
+the run pruned. Under the labels the session itself indexed, a row also drops when the base
+read its file at the same or a later mtime. Both mtimes then come from this machine's
+files. Anywhere else the base's mtime may come from another machine's copy, so the match is
+by content hash alone. Linked worktree rows stay, because no full index walks a worktree.
 
 ## The index is replaced, never written
 
@@ -106,7 +119,9 @@ once. `indy forget` clears a label that really did go.
 It also covers each owned repo's linked worktrees, found with `git worktree list` rather
 than by any directory convention. A worktree file indexes under the repo's label and carries
 its branch, and only while it differs from the main checkout's copy. An identical copy would
-return every hit twice. A removed worktree's rows drop when git stops listing it.
+return every hit twice. Either copy can change which side of that line it is on, so a save
+in the main checkout re-checks the same file in each of its worktrees. A removed worktree's
+rows drop when git stops listing it.
 
 Active repos from `repos_registry`, exemplar clones from `exemplar_registry`, plus any
 `[[extra_paths]]` in config.toml. All three default to nothing outside indy's own XDG dirs —
@@ -133,8 +148,8 @@ ships 14 doc translations, so `docs/*/**` then `!docs/en/**` keeps the 154 Engli
   overhead and would still miss uncommitted work.
 - **A save re-embeds only the chunks whose text is new** — every other chunk reuses the
   vector already stored for that text, from the overlay, the base, or a worktree's main
-  checkout. An embedding depends on nothing but its text, so editing one function embeds
-  one chunk rather than the whole file.
+  checkout. An embedding depends only on its text and the model, so editing one function
+  embeds one chunk rather than the whole file.
 - **symbol_reference is Python-only, and syntactic** — tree-sitter already parses Go/TS/Rust/Lua
   for chunking; reference extraction for those languages is deferred. Beside `call`, `import` and
   `inherit` rows, a name used as any other value is a `reference` row. That is the only trace a

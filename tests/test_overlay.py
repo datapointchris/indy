@@ -67,9 +67,21 @@ def repo(tmp_path, monkeypatch, embedded):
 
 @pytest.fixture
 def overlay(repo):
+    """The overlay, reconciled with the base as `indy watch` reconciles it on starting."""
     conn = storage.open_overlay_db()
+    storage.compact_overlay(conn)
     yield conn
     conn.close()
+
+
+def build_base_elsewhere(monkeypatch, root, directory):
+    """Index root into a base under directory, the way another machine or another data_dir would, and return its path."""
+    directory.mkdir()
+    with monkeypatch.context() as patch:
+        patch.setattr(storage, 'DB_PATH', directory / 'indy.db')
+        patch.setattr(storage, 'WORKING_DB_PATH', directory / 'indy.db.building')
+        service.index_path(root, 'r')
+    return directory / 'indy.db'
 
 
 @pytest.fixture
@@ -173,14 +185,33 @@ def test_a_full_index_that_read_a_newer_save_takes_the_file_back_from_the_overla
     assert symbols('sketch') == [(str(repo / 'tools.py'), None)]
 
 
-def test_a_watch_starting_late_queues_what_changed_while_nothing_watched(repo, overlay):
+def test_a_base_a_syncer_delivers_into_data_dir_sets_aside_an_overlay_reconciled_with_the_last_one(repo, overlay, monkeypatch, tmp_path):
+    """The receiving machine's watcher is stopped, so nothing has compared its saves with the base that arrived."""
+    save(overlay, service.LiveRoot(repo, 'r'), 'tools.py', TOOLS_EDITED.replace('paint', 'sketch'))
     (repo / 'tools.py').write_text(TOOLS_EDITED)
-    (repo / 'gone.py').unlink()
-    (repo / 'new.py').write_text('def fresh():\n    return 2\n')
+    delivered = build_base_elsewhere(monkeypatch, repo, tmp_path / 'peer')
 
-    stale = service.stale_live_paths(service.LiveRoot(repo, 'r'))
+    delivered.replace(storage.DB_PATH)
 
-    assert sorted(path.name for path in stale) == ['gone.py', 'new.py', 'tools.py']
+    assert symbols('sketch') == []
+    assert symbols('paint') == [(str(repo / 'tools.py'), None)]
+    freshness = service.index_freshness()
+    assert freshness is not None
+    assert describe_freshness(freshness).endswith('Live: 1 saved file set aside until `indy watch` reconciles the overlay with this index.')
+
+
+def test_a_read_or_an_index_under_another_data_dir_never_touches_this_index_overlay(repo, overlay, monkeypatch, tmp_path):
+    save(overlay, service.LiveRoot(repo, 'r'), 'tools.py', TOOLS_EDITED)
+    (repo / 'tools.py').write_text(TOOLS)
+    other = build_base_elsewhere(monkeypatch, repo, tmp_path / 'other')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(storage, 'DB_PATH', other)
+        assert symbols('paint') == []
+        assert service.index_freshness()['overlay'] is None
+
+    assert storage.get_overlay_paths(overlay, '') == [str(repo / 'tools.py')]
+    assert symbols('paint') == [(str(repo / 'tools.py'), None)]
 
 
 def test_every_read_states_how_many_files_the_overlay_holds_beyond_the_scan(repo, overlay):
@@ -191,12 +222,6 @@ def test_every_read_states_how_many_files_the_overlay_holds_beyond_the_scan(repo
     assert freshness is not None
     assert freshness['overlay']['files'] == 1
     assert describe_freshness(freshness).endswith('Live: 1 file newer than the scan, updated under a minute ago.')
-
-
-def test_a_machine_with_no_overlay_reads_the_base_as_it_is(repo):
-    assert not storage.overlay_path().exists()
-    assert symbols('render') == [(str(repo / 'tools.py'), None)]
-    assert service.index_freshness()['overlay'] is None
 
 
 def test_a_save_jumps_the_queue_ahead_of_the_catch_up_backlog(tmp_path):
