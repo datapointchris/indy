@@ -5,6 +5,7 @@ import datetime as dt
 import filecmp
 import hashlib
 import heapq
+import json
 import sqlite3
 import subprocess
 import threading
@@ -45,11 +46,20 @@ from indy.config import expand_path
 from indy.config import setting_source
 from indy.repos import EXEMPLAR
 from indy.repos import OWNED
+from indy.repos import IndexTarget
 from indy.repos import all_index_targets
 from indy.repos import get_exemplar_repo_names
 from indy.repos import get_owned_repo_names
 from indy.repos import get_target_by_name
 from indy.repos import is_excluded
+from indy.scip import SCIP_PYTHON
+from indy.scip import ScipError
+from indy.scip import describe_environment
+from indy.scip import environment_digest
+from indy.scip import link_documents
+from indy.scip import name_symbol
+from indy.scip import run_scip_python
+from indy.scip import venv_python
 from indy.storage import IndexNotFoundError
 from indy.storage import base_stamp
 from indy.storage import clear_overlay_file
@@ -75,15 +85,25 @@ from indy.storage import get_member_callers
 from indy.storage import get_overlay_paths
 from indy.storage import get_overlay_summary
 from indy.storage import get_paths_extracted_by_another_version
+from indy.storage import get_python_file_hashes
 from indy.storage import get_read_db
 from indy.storage import get_recent_runs
 from indy.storage import get_reconciled_stamp
 from indy.storage import get_repo_file_paths
 from indy.storage import get_repo_scan_history
+from indy.storage import get_scip_call_sites
+from indy.storage import get_scip_call_targets
+from indy.storage import get_scip_documents
+from indy.storage import get_scip_overridden
+from indy.storage import get_scip_references
+from indy.storage import get_scip_state
+from indy.storage import get_scip_states
+from indy.storage import get_scip_targets
 from indy.storage import get_symbol_callees
 from indy.storage import get_symbol_callers
 from indy.storage import get_tombstone
 from indy.storage import get_tombstoned_paths
+from indy.storage import has_scip_tables
 from indy.storage import index_size_bytes as index_size_bytes
 from indy.storage import insert_chunk
 from indy.storage import insert_chunk_embedding
@@ -96,6 +116,7 @@ from indy.storage import open_overlay_db
 from indy.storage import open_working_db
 from indy.storage import overlay_path
 from indy.storage import put_tombstone
+from indy.storage import replace_scip_index
 from indy.storage import search_chunks
 from indy.storage import set_extractor_version
 from indy.storage import set_overlay_branch
@@ -237,6 +258,20 @@ class IndexSession:
     ) -> dict:
         self.indexed_labels.add(repo_name)
         return index_into(self._conn, root, repo_name, on_progress=on_progress, exclude=exclude)
+
+    def index_target(self, target: IndexTarget, on_progress: ProgressCallback | None = None) -> dict:
+        """Index one target. An owned repo's Python is then resolved by scip-python, against the files this run just read."""
+        result = self.index_path(target.path, target.name, on_progress=on_progress, exclude=target.exclude)
+        if target.kind != OWNED:
+            return result
+
+        def announce() -> None:
+            if on_progress:
+                scanned, updated = result['files_scanned'], result['files_updated']
+                on_progress(IndexProgress(scanned=scanned, updated=updated, to_update=updated, total=scanned, current_file='scip-python'))
+
+        result['scip'] = resolve_python_symbols(self._conn, target.path, target.name, on_start=announce)
+        return result
 
     def clear_errors(self) -> int:
         return delete_error_files(self._conn)
@@ -520,7 +555,8 @@ def index_repo(
     target = get_target_by_name(repo_name)
     if target is None:
         raise ValueError(f'Repo {repo_name!r} not found in active repos')
-    return index_path(target.path, target.name, on_progress=on_progress, exclude=target.exclude, on_stage=on_stage)
+    with index_session(on_stage=on_stage) as session:
+        return session.index_target(target, on_progress=on_progress)
 
 
 def index_all(
@@ -529,9 +565,86 @@ def index_all(
 ) -> list[dict]:
     """Index every target: portfolio repos, exemplar clones, and configured extra paths."""
     with index_session(on_stage=on_stage) as session:
-        return [
-            session.index_path(target.path, target.name, on_progress=on_progress, exclude=target.exclude) for target in all_index_targets()
-        ]
+        return [session.index_target(target, on_progress=on_progress) for target in all_index_targets()]
+
+
+# ── scip-python ───────────────────────────────────────────────────────────────
+
+# Raise whenever link_documents changes the rows it writes. The fingerprint carries it, so the
+# next index runs scip-python again over every repo, however unchanged its files are.
+SCIP_LINK_VERSION = 1
+
+NO_VENV_REASON = 'no .venv, and scip-python needs the project installed in one to name its modules'
+
+
+def scip_fingerprint(files: list[tuple[str, str]], environment: str) -> str:
+    """What a scip-python run over a repo depends on: its Python files, its packages, and the code reading the result."""
+    inputs = [SCIP_PYTHON, SCIP_LINK_VERSION, EXTRACTOR_VERSION, environment_digest(environment), files]
+    return hashlib.sha256(json.dumps(inputs).encode()).hexdigest()
+
+
+def resolve_python_symbols(
+    conn: sqlite3.Connection,
+    root: Path,
+    repo_name: str,
+    on_start: Callable[[], None] | None = None,
+) -> dict:
+    """Run scip-python over one repo and replace its scip_* rows. Returns the repo's scip_index record.
+
+    A repo it cannot index is recorded as skipped or failed, with the reason, and keeps no
+    rows. That never stops the run, and `deps` answers for the repo from its syntactic rows.
+
+    The run is skipped when nothing it depends on changed since the last one that succeeded.
+    A Python file indy does not index is outside that check, as it is outside the links.
+    """
+    started = time.perf_counter()
+    state: dict = {
+        'repo': repo_name,
+        'indexed_at': dt.datetime.now(dt.UTC).isoformat(),
+        'status': 'skipped',
+        'reason': None,
+        'fingerprint': None,
+        'document_count': 0,
+        'reference_count': 0,
+        'seconds': None,
+    }
+    try:
+        files = get_python_file_hashes(conn, repo_name)
+        python = venv_python(root)
+        if not files:
+            state['reason'] = 'no Python files'
+        elif python is None:
+            state['reason'] = NO_VENV_REASON
+        else:
+            environment = describe_environment(python)
+            fingerprint = scip_fingerprint(files, environment)
+            previous = get_scip_state(conn, repo_name)
+            if previous and previous['status'] == 'ok' and previous['fingerprint'] == fingerprint:
+                return {**previous, 'unchanged': True}
+            if on_start:
+                on_start()
+            documents = run_scip_python(root, repo_name, environment)
+            linked = link_documents(root, repo_name, documents, {path for path, _ in files})
+            state |= {
+                'status': 'ok',
+                'fingerprint': fingerprint,
+                'document_count': len(linked.documents),
+                'reference_count': len(linked.references),
+                'seconds': round(time.perf_counter() - started, 1),
+            }
+            rows = {
+                'scip_document': linked.documents,
+                'scip_symbol': linked.symbols,
+                'scip_occurrence': linked.references,
+                'scip_relationship': linked.relationships,
+            }
+            replace_scip_index(conn, state, rows)
+            return state
+    except Exception as exc:
+        state |= {'status': 'failed', 'reason': str(exc) if isinstance(exc, ScipError) else f'{type(exc).__name__}: {exc}'}
+    state['seconds'] = round(time.perf_counter() - started, 1)
+    replace_scip_index(conn, state)
+    return state
 
 
 # ── live overlay ──────────────────────────────────────────────────────────────
@@ -1156,6 +1269,7 @@ def get_status() -> dict:
         stats = get_index_stats(conn)
         stats['freshness'] = read_freshness(conn)
         stats['recent_runs'] = get_recent_runs(conn, limit=5)
+        stats['scip'] = get_scip_states(conn)
         if stats['error_files']:
             stats['error_file_details'] = expand_result_paths(get_error_files(conn))
         else:
@@ -1253,27 +1367,81 @@ def split_symbol(symbol_name: str) -> tuple[str, str, str]:
     return owner, member, bracket + rest
 
 
-def find_callers(conn: sqlite3.Connection, symbol_name: str, repo: str | None = None) -> list[dict]:
-    """Callers of a bare name, or of `Owner.member` by the qualified rules, with candidates and then tests last.
+def symbol_owner(symbol: str) -> str | None:
+    """What a SCIP symbol belongs to, as `deps` prints a target: its class, or its module's last component."""
+    named = name_symbol(symbol)
+    if named is None:
+        return None
+    return named.name.rpartition('.')[0] or named.module.rpartition('.')[2] or None
 
-    The sort is stable, so within each group the rows keep the order the rules matched them in.
+
+def find_callers(conn: sqlite3.Connection, symbol_name: str, repo: str | None = None) -> tuple[list[dict], list[str]]:
+    """Callers of a bare name or of `Owner.member`, with candidates and then tests last, and the repos scip-python resolved them in.
+
+    Where scip-python defines the symbol, the repos it ran over take their callers from it.
+    A caller the syntactic rules also reach keeps their label. One only a type checker
+    reaches is `inferred`, and a call to a method this one overrides is `override`. A
+    syntactic candidate there stands only where scip-python resolved nothing of that name in
+    the same caller. Every other file, including any the overlay holds, keeps the syntactic rules.
+
+    The sort is stable, so within each group the rows keep the order they were found in.
     """
     owner, member, _ = split_symbol(symbol_name)
-    rows = get_member_callers(conn, owner, member, repo=repo) if owner else get_symbol_callers(conn, member, repo=repo)
-    return sorted(rows, key=lambda row: (row['via'] == 'candidate', is_test_path(row['source_file'])))
+    syntactic = get_member_callers(conn, owner, member, repo=repo) if owner else get_symbol_callers(conn, member, repo=repo)
+    for row in syntactic:
+        row['line'] = None
+    targets = get_scip_targets(conn, owner, member)
+    rows = syntactic
+    linked: dict[str, str] = {}
+    if targets:
+        symbols = {target['symbol'] for target in targets}
+        overridden = get_scip_overridden(conn, symbols)
+        linked = get_scip_documents(conn, {target['repo'] for target in targets})
+        rules = {(row['source_file'], row['source_symbol']): row['via'] for row in syntactic if row['via'] != 'candidate'}
+        resolved_sites = get_scip_call_sites(conn, member)
+        rows = [
+            {
+                'source_file': use['file_path'],
+                'source_symbol': use['source_symbol'],
+                'target_symbol': member,
+                'target_module': symbol_owner(use['symbol']),
+                'ref_type': use['ref_type'],
+                'line': use['line'],
+                'via': 'override' if use['symbol'] in overridden else rules.get((use['file_path'], use['source_symbol']), 'inferred'),
+            }
+            for use in get_scip_references(conn, symbols | overridden, repo)
+        ]
+        rows += [
+            row
+            for row in syntactic
+            if row['source_file'] not in linked
+            or (row['via'] == 'candidate' and (row['source_file'], row['source_symbol']) not in resolved_sites)
+        ]
+    ordered = sorted(rows, key=lambda row: (row['via'] == 'candidate', is_test_path(row['source_file'])))
+    return ordered, sorted(set(linked.values()))
 
 
 def find_callees(conn: sqlite3.Connection, symbol_name: str, repo: str | None = None) -> list[dict]:
     """Calls made inside a symbol. `module.function` is matched as `function` in files named `module`.
 
     A method's source symbol is `Class.method` already, so an owner that is an indexed class is
-    matched whole.
+    matched whole. In a file scip-python linked, a call it resolved to one symbol is printed
+    under that symbol's owner rather than the receiver's name.
     """
     owner, member, subscript = split_symbol(symbol_name)
     stem = owner.rpartition('.')[2]
     if stem and not is_indexed_class(conn, stem):
-        return get_symbol_callees(conn, member + subscript, repo=repo, file_stem=stem)
-    return get_symbol_callees(conn, symbol_name, repo=repo)
+        rows = get_symbol_callees(conn, member + subscript, repo=repo, file_stem=stem)
+    else:
+        rows = get_symbol_callees(conn, symbol_name, repo=repo)
+    if not has_scip_tables(conn):
+        return rows
+    for row in rows:
+        resolved = get_scip_call_targets(conn, row['source_file'], row['source_symbol'], row['target_symbol'])
+        owners = {symbol_owner(symbol) for symbol in resolved}
+        if len(owners) == 1 and None not in owners:
+            row['target_module'] = owners.pop()
+    return rows
 
 
 def get_dependencies(symbol_name: str, repo: str | None = None, direction: str = 'both') -> dict:
@@ -1282,12 +1450,16 @@ def get_dependencies(symbol_name: str, repo: str | None = None, direction: str =
     direction='callers' → what calls symbol_name
     direction='callees' → what symbol_name calls
     direction='both'    → both
+
+    `resolved_by_scip` names the repos whose callers scip-python resolved, where a missing
+    caller means the type checker found none rather than that no rule matched.
     """
     conn = get_read_db()
     try:
         result: dict = {}
         if direction in ('callers', 'both'):
-            result['callers'] = located(find_callers(conn, symbol_name, repo=repo), key='source_file')
+            callers, result['resolved_by_scip'] = find_callers(conn, symbol_name, repo=repo)
+            result['callers'] = located(callers, key='source_file')
         if direction in ('callees', 'both'):
             result['callees'] = located(find_callees(conn, symbol_name, repo=repo), key='source_file')
         return result

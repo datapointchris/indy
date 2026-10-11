@@ -187,9 +187,69 @@ def add_missing_column(conn: sqlite3.Connection, table: str, column: str, declar
         conn.execute(f'ALTER TABLE {table} ADD COLUMN {column} {declaration}')
 
 
+SCIP_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS scip_index (
+        repo        TEXT PRIMARY KEY,
+        indexed_at  TEXT NOT NULL,
+        status      TEXT NOT NULL,
+        reason      TEXT,
+        fingerprint TEXT,
+        document_count  INTEGER NOT NULL DEFAULT 0,
+        reference_count INTEGER NOT NULL DEFAULT 0,
+        seconds     REAL
+    );
+
+    CREATE TABLE IF NOT EXISTS scip_document (
+        file_path TEXT PRIMARY KEY,
+        repo      TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_scip_document_repo ON scip_document(repo);
+
+    CREATE TABLE IF NOT EXISTS scip_symbol (
+        id        INTEGER PRIMARY KEY,
+        repo      TEXT NOT NULL,
+        symbol    TEXT NOT NULL,
+        module    TEXT NOT NULL,
+        name      TEXT NOT NULL,
+        member    TEXT NOT NULL,
+        kind      TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        line      INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_scip_symbol_member ON scip_symbol(member);
+    CREATE INDEX IF NOT EXISTS idx_scip_symbol_repo ON scip_symbol(repo);
+
+    CREATE TABLE IF NOT EXISTS scip_occurrence (
+        id            INTEGER PRIMARY KEY,
+        repo          TEXT NOT NULL,
+        file_path     TEXT NOT NULL,
+        line          INTEGER NOT NULL,
+        symbol        TEXT NOT NULL,
+        member        TEXT NOT NULL,
+        source_symbol TEXT,
+        ref_type      TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_scip_occurrence_symbol ON scip_occurrence(symbol);
+    CREATE INDEX IF NOT EXISTS idx_scip_occurrence_member ON scip_occurrence(member);
+    CREATE INDEX IF NOT EXISTS idx_scip_occurrence_repo ON scip_occurrence(repo);
+
+    CREATE TABLE IF NOT EXISTS scip_relationship (
+        id            INTEGER PRIMARY KEY,
+        repo          TEXT NOT NULL,
+        symbol        TEXT NOT NULL,
+        kind          TEXT NOT NULL,
+        target_symbol TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_scip_relationship_symbol ON scip_relationship(symbol);
+    CREATE INDEX IF NOT EXISTS idx_scip_relationship_repo ON scip_relationship(repo);
+"""
+"""What scip-python resolved in each owned Python repo. Only a full index writes it, so only the base holds it."""
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         CONTENT_SCHEMA
+        + SCIP_SCHEMA
         + """
         CREATE TABLE IF NOT EXISTS index_run (
             id            INTEGER PRIMARY KEY,
@@ -313,6 +373,21 @@ OVERLAY_VIEWS = """
         FROM overlay.symbol_reference r JOIN overlay.indexed_file f ON f.file_path = r.source_file;
 """
 
+# The overlay holds no SCIP rows, so a file it holds has none: `deps` reads that file's
+# syntactic rows from the overlay instead of the base's links into content that changed.
+SCIP_OVERLAY_VIEWS = """
+    CREATE TEMP VIEW scip_document AS
+        SELECT * FROM main.scip_document WHERE file_path NOT IN (SELECT file_path FROM temp.shadowed);
+
+    CREATE TEMP VIEW scip_occurrence AS
+        SELECT * FROM main.scip_occurrence WHERE file_path NOT IN (SELECT file_path FROM temp.shadowed);
+"""
+
+
+def has_scip_tables(conn: sqlite3.Connection) -> bool:
+    """Whether the base was built by an indy that runs scip-python. An older base has no scip_* tables to read."""
+    return conn.execute("SELECT 1 FROM main.sqlite_master WHERE type = 'table' AND name = 'scip_occurrence'").fetchone() is not None
+
 
 def attach_overlay(conn: sqlite3.Connection) -> None:
     """Lay the overlay over a read connection to the base, if it was last reconciled with this base.
@@ -330,6 +405,8 @@ def attach_overlay(conn: sqlite3.Connection) -> None:
     reconciled = conn.execute('SELECT base_stamp FROM overlay.overlay_state').fetchone()
     if reconciled is not None and reconciled[0] == base_stamp():
         conn.executescript(OVERLAY_VIEWS)
+        if has_scip_tables(conn):
+            conn.executescript(SCIP_OVERLAY_VIEWS)
 
 
 def has_overlay(conn: sqlite3.Connection) -> bool:
@@ -721,6 +798,8 @@ def delete_repo(conn: sqlite3.Connection, repo: str) -> dict:
         conn.execute('DELETE FROM symbol_reference WHERE source_file = ?', (file_path,))
     files = conn.execute('DELETE FROM indexed_file WHERE repo = ?', (repo,)).rowcount
     runs = conn.execute('DELETE FROM index_run WHERE repo = ?', (repo,)).rowcount
+    delete_scip_rows(conn, repo)
+    conn.execute('DELETE FROM scip_index WHERE repo = ?', (repo,))
     conn.commit()
     return {'files': files, 'chunks': len(chunk_ids), 'runs': runs}
 
@@ -956,3 +1035,138 @@ def get_symbol_callees(conn: sqlite3.Connection, source_symbol: str, repo: str |
         order_by='sr.target_symbol',
     )
     return [row for row in rows if file_stem is None or Path(row['source_file']).stem == file_stem]
+
+
+# ── scip ──────────────────────────────────────────────────────────────────────
+
+SCIP_ROW_TABLES = ('scip_document', 'scip_symbol', 'scip_occurrence', 'scip_relationship')
+
+
+def delete_scip_rows(conn: sqlite3.Connection, repo: str) -> None:
+    for table in SCIP_ROW_TABLES:
+        conn.execute(f'DELETE FROM {table} WHERE repo = ?', (repo,))
+
+
+def get_python_file_hashes(conn: sqlite3.Connection, repo: str) -> list[tuple[str, str]]:
+    """(file_path, content_hash) of every Python file indexed under repo, in path order."""
+    rows = conn.execute(
+        "SELECT file_path, content_hash FROM indexed_file WHERE repo = ? AND language = 'python' AND status = 'ok' ORDER BY file_path",
+        (repo,),
+    )
+    return [(row[0], row[1]) for row in rows]
+
+
+def get_scip_state(conn: sqlite3.Connection, repo: str) -> dict | None:
+    row = conn.execute('SELECT * FROM scip_index WHERE repo = ?', (repo,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_scip_states(conn: sqlite3.Connection) -> list[dict]:
+    if not has_scip_tables(conn):
+        return []
+    return [dict(row) for row in conn.execute('SELECT * FROM scip_index ORDER BY repo')]
+
+
+def replace_scip_index(conn: sqlite3.Connection, state: dict, rows: dict[str, list[dict]] | None = None) -> None:
+    """Record what the last scip-python pass over a repo did, with the rows it produced, in one transaction.
+
+    rows of None leaves the repo with none, which is what a skip or a failure leaves: `deps`
+    then reads the repo's syntactic rows rather than links into code that has since changed.
+    """
+    rows = rows or {}
+    try:
+        delete_scip_rows(conn, state['repo'])
+        for table in SCIP_ROW_TABLES:
+            batch = rows.get(table, [])
+            if batch:
+                columns = list(batch[0])
+                conn.executemany(
+                    f'INSERT INTO {table} ({", ".join(columns)}) VALUES ({", ".join(":" + column for column in columns)})',
+                    batch,
+                )
+        conn.execute(
+            """
+            INSERT INTO scip_index (repo, indexed_at, status, reason, fingerprint, document_count, reference_count, seconds)
+            VALUES (:repo, :indexed_at, :status, :reason, :fingerprint, :document_count, :reference_count, :seconds)
+            ON CONFLICT (repo) DO UPDATE SET
+                indexed_at = excluded.indexed_at, status = excluded.status, reason = excluded.reason,
+                fingerprint = excluded.fingerprint, document_count = excluded.document_count,
+                reference_count = excluded.reference_count, seconds = excluded.seconds
+            """,
+            state,
+        )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def get_scip_targets(conn: sqlite3.Connection, owner: str, member: str) -> list[dict]:
+    """The symbols scip-python defines that `owner.member`, or a bare `member` when owner is empty, can name.
+
+    An owner names a class by its last name, `Provider` for `Provider.install_all` and for
+    `Outer.Provider.install_all`, or a module by its last component, `registry` for
+    `pkg.registry.install_all`.
+    """
+    if not has_scip_tables(conn):
+        return []
+    rows = [dict(row) for row in conn.execute('SELECT DISTINCT repo, symbol, module, name FROM scip_symbol WHERE member = ?', (member,))]
+    if not owner:
+        return rows
+    name = owner.rpartition('.')[2]
+    qualified = f'{name}.{member}'
+    return [
+        row
+        for row in rows
+        if row['name'] == qualified
+        or row['name'].endswith(f'.{qualified}')
+        or (row['name'] == member and row['module'].rpartition('.')[2] == name)
+    ]
+
+
+def get_scip_overridden(conn: sqlite3.Connection, symbols: set[str]) -> set[str]:
+    """Every method the given ones override, up the whole chain, from scip-python's implementation links."""
+    found: set[str] = set()
+    frontier = set(symbols)
+    while frontier:
+        marks = ', '.join('?' * len(frontier))
+        rows = conn.execute(
+            f"SELECT DISTINCT target_symbol FROM scip_relationship WHERE kind = 'implementation' AND symbol IN ({marks})", tuple(frontier)
+        )
+        frontier = {row[0] for row in rows} - found - symbols
+        found |= frontier
+    return found
+
+
+def get_scip_references(conn: sqlite3.Connection, symbols: set[str], repo: str | None = None) -> list[dict]:
+    """Every value use of the given symbols, with the caller it sits in, narrowed to one repo when repo is set."""
+    if not symbols:
+        return []
+    marks = ', '.join('?' * len(symbols))
+    repo_condition = ' AND repo = ?' if repo else ''
+    rows = conn.execute(
+        f'SELECT * FROM scip_occurrence WHERE symbol IN ({marks}){repo_condition} ORDER BY file_path, line',
+        (*symbols, repo) if repo else tuple(symbols),
+    )
+    return [dict(row) for row in rows]
+
+
+def get_scip_documents(conn: sqlite3.Connection, repos: set[str]) -> dict[str, str]:
+    """Each file scip-python linked in the given repos, less any the overlay holds, mapped to its repo."""
+    marks = ', '.join('?' * len(repos))
+    return {row[0]: row[1] for row in conn.execute(f'SELECT file_path, repo FROM scip_document WHERE repo IN ({marks})', tuple(repos))}
+
+
+def get_scip_call_sites(conn: sqlite3.Connection, member: str) -> set[tuple[str, str | None]]:
+    """(file_path, source_symbol) of every place scip-python resolved a use of anything named member."""
+    rows = conn.execute('SELECT DISTINCT file_path, source_symbol FROM scip_occurrence WHERE member = ?', (member,))
+    return {(row[0], row[1]) for row in rows}
+
+
+def get_scip_call_targets(conn: sqlite3.Connection, file_path: str, source_symbol: str | None, member: str) -> set[str]:
+    """Every symbol scip-python resolved a call of member to, inside one caller."""
+    rows = conn.execute(
+        "SELECT DISTINCT symbol FROM scip_occurrence WHERE file_path = ? AND source_symbol IS ? AND member = ? AND ref_type = 'call'",
+        (file_path, source_symbol, member),
+    )
+    return {row[0] for row in rows}

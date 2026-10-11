@@ -18,7 +18,7 @@ named from `DB_PATH`'s resolved path, so each index has its own, and `INDY_DIR` 
 
 **For any file the overlay holds, as rows or as a tombstone, the base's rows are hidden.**
 `get_read_db` attaches the overlay and creates temp views named `chunk`, `indexed_file` and
-`symbol_reference`. SQLite resolves an unqualified name in the temp schema first, so every
+`symbol_reference`, and `scip_document` and `scip_occurrence` where the base has them. SQLite resolves an unqualified name in the temp schema first, so every
 query in `storage.py` reads the merged store without naming either one. Overlay ids are
 negated in the views, which keeps an id unique across both. Vector search is the exception:
 a vec0 MATCH needs the virtual table itself, so `search_chunks` runs KNN on each store and
@@ -162,7 +162,38 @@ ships 14 doc translations, so `docs/*/**` then `!docs/en/**` keeps the 154 Engli
   carries the rule that matched it as `via`. A call of `.b` on an untyped receiver is a
   `candidate`, listed after every resolved caller and counted apart from them in the header.
   Matching a method by name alone buries the real caller among every unrelated `.install` in the
-  index. Exact resolution and inferred types are a type checker's job and stay out.
+  index. Exact resolution and inferred types are a type checker's job, so these rules leave
+  them to scip-python.
+- **scip-python resolves owned Python repos, inside the full index and never in `indy watch`.**
+  It is pinned at 0.6.6 and run through `npx`, from the repo's `.venv` with an
+  `--environment` file listing its packages. A uv venv has no `pip`, and without that file
+  the run aborts with an empty index. A repo with no venv is skipped, because without the
+  project installed scip-python names its modules after their paths (`src.pkg.mod`). A
+  skipped or failed repo keeps no SCIP rows, and `scip_index` records why. Exemplars are
+  left out. A run takes about twenty seconds on a large repo, which no save can wait for.
+- **In a repo scip-python ran over, `deps` takes callers from it.** A caller the syntactic
+  rules also reach keeps their label, one only a type checker reaches is `inferred`, and a
+  call to a method the target overrides is `override`, from SCIP's implementation links. A
+  syntactic candidate there survives only where SCIP resolved nothing of that name in the
+  same caller. Every other file keeps the syntactic rules: other repos, worktrees, and any
+  file the overlay holds, whose SCIP rows the views hide because they describe old content.
+- **A SCIP reference takes its caller from `ReferenceExtractor`'s scopes.** SCIP gives an
+  enclosing range only to definitions, and none to module-level code. Reusing the scopes
+  the syntactic rows are named from gives both tiers one caller name, `STEPS['wslconfig']`
+  included. The extractor's non-value spans drop an occurrence inside an import, an
+  annotation or a class base, all of which scip-python reports as reads.
+- **An occurrence must spell its symbol's name, or an import alias of it.** scip-python
+  resolves a PEP 695 type parameter to the function declaring it, and writes a class's type
+  parameter as a second definition of the class. Only references to a symbol an indexed
+  file defines are kept, which also drops the standard-library modules it attributes to the
+  project's own package.
+- **The SCIP index is decoded from the protobuf wire format.** indy reads eight fields of
+  four messages, and the 16 MB index of a 110k-line repo decodes in under half a second. Generated
+  bindings would add the `protobuf` runtime and a generated module pinned to the protoc that
+  wrote it.
+- **A repo's scip-python run is skipped while its fingerprint is unchanged.** It covers the
+  Python files' content hashes, the installed packages, the pinned version, and
+  `SCIP_LINK_VERSION`, which is raised whenever the rows `link_documents` writes change.
 - **An attribute read through `self`, `cls` or an annotated parameter is a `reference` row** —
   a property read and a bound method passed as a callback have no other trace. A read through
   any other local is skipped, since nothing says what class the local holds.
