@@ -8,7 +8,11 @@ import sqlite_vec
 
 from indy.config import DB_PATH
 from indy.config import EMBEDDING_DIM
+from indy.config import OVERLAY_PATH
 from indy.config import WORKING_DB_PATH
+
+# `indy watch` and the compaction after a full index both write the overlay.
+OVERLAY_BUSY_SECONDS = 30.0
 
 
 class IndexNotFoundError(Exception):
@@ -19,6 +23,12 @@ def load_vec_extension(conn: sqlite3.Connection) -> None:
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
+
+
+def file_uri(path: Path, mode: str = '') -> str:
+    """A path as an SQLite URI, percent-encoded so a `?` or `#` in it is not read as a parameter."""
+    uri = path.absolute().as_uri()
+    return f'{uri}?mode={mode}' if mode else uri
 
 
 def index_size_bytes() -> int:
@@ -42,7 +52,7 @@ def open_working_db() -> sqlite3.Connection:
     discard_working_files()
 
     if DB_PATH.exists():
-        source = sqlite3.connect(f'file:{DB_PATH}?mode=ro', uri=True)
+        source = sqlite3.connect(file_uri(DB_PATH, 'ro'), uri=True)
         try:
             source.execute('VACUUM INTO ?', (str(WORKING_DB_PATH),))
         finally:
@@ -96,8 +106,8 @@ def discard_sidecars(db_path: Path) -> None:
         db_path.with_name(db_path.name + suffix).unlink(missing_ok=True)
 
 
-def get_read_db() -> sqlite3.Connection:
-    """Open the index read-only, at the same path a write would use.
+def open_base_readonly() -> sqlite3.Connection:
+    """Open the index read-only, at the same path a write would use, and nothing beside it.
 
     Read-only is a correctness requirement rather than an optimization. A normal connection
     to a WAL database writes to the main file when the last connection closes — SQLite runs
@@ -108,27 +118,76 @@ def get_read_db() -> sqlite3.Connection:
     """
     if not DB_PATH.exists():
         raise IndexNotFoundError(f'No index at {DB_PATH}. Run `indy index`, or wait for a peer to deliver one.')
-    conn = sqlite3.connect(f'file:{DB_PATH}?mode=ro', uri=True)
+    conn = sqlite3.connect(file_uri(DB_PATH, 'ro'), uri=True)
     conn.row_factory = sqlite3.Row
     load_vec_extension(conn)
     return conn
 
 
-def init_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(f"""
-        CREATE TABLE IF NOT EXISTS indexed_file (
-            id           INTEGER PRIMARY KEY,
-            repo         TEXT NOT NULL,
-            file_path    TEXT NOT NULL UNIQUE,
-            language     TEXT,
-            mtime        REAL NOT NULL,
-            content_hash TEXT NOT NULL,
-            chunk_count  INTEGER NOT NULL,
-            indexed_at   TEXT NOT NULL,
-            status       TEXT DEFAULT 'ok',
-            extractor_version INTEGER NOT NULL DEFAULT 0
-        );
+def get_read_db() -> sqlite3.Connection:
+    """The index as a read sees it: the base, with this machine's overlay laid over it if it has one."""
+    conn = open_base_readonly()
+    attach_overlay(conn)
+    return conn
 
+
+CONTENT_SCHEMA = f"""
+    CREATE TABLE IF NOT EXISTS indexed_file (
+        id           INTEGER PRIMARY KEY,
+        repo         TEXT NOT NULL,
+        file_path    TEXT NOT NULL UNIQUE,
+        language     TEXT,
+        mtime        REAL NOT NULL,
+        content_hash TEXT NOT NULL,
+        chunk_count  INTEGER NOT NULL,
+        indexed_at   TEXT NOT NULL,
+        status       TEXT DEFAULT 'ok',
+        extractor_version INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS chunk (
+        id           INTEGER PRIMARY KEY,
+        file_path    TEXT NOT NULL,
+        repo         TEXT NOT NULL,
+        language     TEXT,
+        symbol_name  TEXT,
+        symbol_type  TEXT,
+        module       TEXT,
+        text         TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_chunk_symbol ON chunk(symbol_name);
+    CREATE INDEX IF NOT EXISTS idx_chunk_file ON chunk(file_path);
+
+    CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
+        embedding float[{EMBEDDING_DIM}] distance_metric=cosine
+    );
+
+    CREATE TABLE IF NOT EXISTS symbol_reference (
+        id            INTEGER PRIMARY KEY,
+        source_file   TEXT NOT NULL,
+        source_symbol TEXT,
+        target_symbol TEXT NOT NULL,
+        target_module TEXT,
+        ref_type      TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_symref_source ON symbol_reference(source_file);
+    CREATE INDEX IF NOT EXISTS idx_symref_target ON symbol_reference(target_symbol);
+    CREATE INDEX IF NOT EXISTS idx_symref_inherit ON symbol_reference(source_symbol) WHERE ref_type = 'inherit';
+"""
+"""The tables a file's content lives in, which the base and the overlay both hold."""
+
+
+def add_missing_column(conn: sqlite3.Connection, table: str, column: str, declaration: str) -> None:
+    """CREATE TABLE IF NOT EXISTS never reaches a table built before the column existed."""
+    if column not in {row[1] for row in conn.execute(f'PRAGMA table_info({table})')}:
+        conn.execute(f'ALTER TABLE {table} ADD COLUMN {column} {declaration}')
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        CONTENT_SCHEMA
+        + """
         CREATE TABLE IF NOT EXISTS index_run (
             id            INTEGER PRIMARY KEY,
             repo          TEXT NOT NULL,
@@ -139,40 +198,259 @@ def init_schema(conn: sqlite3.Connection) -> None:
             chunks_added  INTEGER,
             error         TEXT
         );
-
-        CREATE TABLE IF NOT EXISTS chunk (
-            id           INTEGER PRIMARY KEY,
-            file_path    TEXT NOT NULL,
-            repo         TEXT NOT NULL,
-            language     TEXT,
-            symbol_name  TEXT,
-            symbol_type  TEXT,
-            module       TEXT,
-            text         TEXT NOT NULL
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_chunk_symbol ON chunk(symbol_name);
-
-        CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
-            embedding float[{EMBEDDING_DIM}] distance_metric=cosine
-        );
-
-        CREATE TABLE IF NOT EXISTS symbol_reference (
-            id            INTEGER PRIMARY KEY,
-            source_file   TEXT NOT NULL,
-            source_symbol TEXT,
-            target_symbol TEXT NOT NULL,
-            target_module TEXT,
-            ref_type      TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_symref_source ON symbol_reference(source_file);
-        CREATE INDEX IF NOT EXISTS idx_symref_target ON symbol_reference(target_symbol);
-        CREATE INDEX IF NOT EXISTS idx_symref_inherit ON symbol_reference(source_symbol) WHERE ref_type = 'inherit';
-    """)
-    # CREATE TABLE IF NOT EXISTS never reaches an index built before the column existed.
-    if 'extractor_version' not in {row[1] for row in conn.execute('PRAGMA table_info(indexed_file)')}:
-        conn.execute('ALTER TABLE indexed_file ADD COLUMN extractor_version INTEGER NOT NULL DEFAULT 0')
+        """
+    )
+    add_missing_column(conn, 'indexed_file', 'extractor_version', 'INTEGER NOT NULL DEFAULT 0')
     conn.commit()
+
+
+# ── overlay ───────────────────────────────────────────────────────────────────
+
+
+def init_overlay_schema(conn: sqlite3.Connection) -> None:
+    """The content tables, plus what only the overlay records.
+
+    A tombstone is a file deleted since the base was built: the base still holds its rows,
+    and the tombstone is what hides them. `branch` is set on a linked worktree's files, which
+    the base never holds, and is how a result says which branch it came from.
+    """
+    conn.executescript(
+        CONTENT_SCHEMA
+        + """
+        CREATE TABLE IF NOT EXISTS tombstone (
+            file_path  TEXT PRIMARY KEY,
+            repo       TEXT NOT NULL,
+            deleted_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS overlay_state (
+            id         INTEGER PRIMARY KEY CHECK (id = 1),
+            updated_at TEXT NOT NULL
+        );
+        """
+    )
+    add_missing_column(conn, 'indexed_file', 'branch', 'TEXT')
+    conn.commit()
+
+
+def open_overlay_db() -> sqlite3.Connection:
+    """Open this machine's overlay for writing, creating it on first use.
+
+    WAL and written in place, which the base must never be. That is safe here and only here
+    because the overlay lives outside data_dir, so nothing replicates it: the property that
+    corrupted the synced index was a file changing under a syncer, and no syncer reads this one.
+    Opened as a URI so compaction can attach the base read-only beside it.
+    """
+    OVERLAY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(file_uri(OVERLAY_PATH), uri=True, timeout=OVERLAY_BUSY_SECONDS)
+    conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA journal_mode=WAL')
+    load_vec_extension(conn)
+    init_overlay_schema(conn)
+    return conn
+
+
+# Temp views named for the base's tables. SQLite resolves an unqualified name in the temp
+# schema before main, so every query in this module reads base and overlay as one store
+# without naming either. Overlay ids are negated, which keeps an id unique across both.
+# `indexed_file` leaves out extractor_version: no read uses it, and a base built before
+# the column existed would otherwise refuse the view.
+OVERLAY_VIEWS = """
+    CREATE TEMP VIEW shadowed AS
+        SELECT file_path FROM overlay.indexed_file
+        UNION ALL
+        SELECT file_path FROM overlay.tombstone;
+
+    CREATE TEMP VIEW indexed_file AS
+        SELECT id, repo, file_path, language, mtime, content_hash, chunk_count, indexed_at, status, NULL AS branch
+        FROM main.indexed_file
+        WHERE file_path NOT IN (SELECT file_path FROM temp.shadowed)
+        UNION ALL
+        SELECT -id, repo, file_path, language, mtime, content_hash, chunk_count, indexed_at, status, branch
+        FROM overlay.indexed_file;
+
+    CREATE TEMP VIEW chunk AS
+        SELECT id, file_path, repo, language, symbol_name, symbol_type, module, text, NULL AS branch
+        FROM main.chunk
+        WHERE file_path NOT IN (SELECT file_path FROM temp.shadowed)
+        UNION ALL
+        SELECT -c.id, c.file_path, c.repo, c.language, c.symbol_name, c.symbol_type, c.module, c.text, f.branch
+        FROM overlay.chunk c JOIN overlay.indexed_file f ON f.file_path = c.file_path;
+
+    CREATE TEMP VIEW symbol_reference AS
+        SELECT id, source_file, source_symbol, target_symbol, target_module, ref_type, NULL AS branch
+        FROM main.symbol_reference
+        WHERE source_file NOT IN (SELECT file_path FROM temp.shadowed)
+        UNION ALL
+        SELECT -r.id, r.source_file, r.source_symbol, r.target_symbol, r.target_module, r.ref_type, f.branch
+        FROM overlay.symbol_reference r JOIN overlay.indexed_file f ON f.file_path = r.source_file;
+"""
+
+
+def attach_overlay(conn: sqlite3.Connection) -> None:
+    """Lay this machine's overlay over a read connection to the base, if there is one.
+
+    For any file the overlay holds, as rows or as a tombstone, the base's rows for that path
+    are hidden. A machine with no overlay, which is every machine but the one running
+    `indy watch`, reads the base exactly as before. Read-only like the base itself.
+    """
+    if not OVERLAY_PATH.exists():
+        return
+    conn.execute('ATTACH DATABASE ? AS overlay', (file_uri(OVERLAY_PATH, 'ro'),))
+    conn.executescript(OVERLAY_VIEWS)
+
+
+def overlay_path() -> Path:
+    return OVERLAY_PATH
+
+
+def has_overlay(conn: sqlite3.Connection) -> bool:
+    return any(row[1] == 'overlay' for row in conn.execute('PRAGMA database_list'))
+
+
+def get_tombstone(conn: sqlite3.Connection, file_path: str) -> dict | None:
+    row = conn.execute('SELECT * FROM tombstone WHERE file_path = ?', (file_path,)).fetchone()
+    return dict(row) if row else None
+
+
+def put_tombstone(conn: sqlite3.Connection, file_path: str, repo: str, deleted_at: str) -> None:
+    conn.execute(
+        'INSERT INTO tombstone (file_path, repo, deleted_at) VALUES (?, ?, ?)'
+        ' ON CONFLICT (file_path) DO UPDATE SET deleted_at = excluded.deleted_at',
+        (file_path, repo, deleted_at),
+    )
+
+
+def clear_overlay_file(conn: sqlite3.Connection, file_path: str) -> bool:
+    """Remove everything the overlay holds for one path. Returns whether it held anything."""
+    held = conn.execute(
+        'SELECT 1 FROM indexed_file WHERE file_path = ? UNION ALL SELECT 1 FROM tombstone WHERE file_path = ?', (file_path, file_path)
+    ).fetchone()
+    delete_file_chunks(conn, file_path)
+    delete_file_references(conn, file_path)
+    delete_indexed_file(conn, file_path)
+    conn.execute('DELETE FROM tombstone WHERE file_path = ?', (file_path,))
+    return held is not None
+
+
+def insert_overlay_file(conn: sqlite3.Connection, data: dict) -> None:
+    conn.execute(
+        """
+        INSERT INTO indexed_file
+            (repo, file_path, language, mtime, content_hash, chunk_count, indexed_at, status, extractor_version, branch)
+        VALUES (:repo, :file_path, :language, :mtime, :content_hash, :chunk_count, :indexed_at, 'ok', :extractor_version, :branch)
+        """,
+        data,
+    )
+
+
+def mark_overlay_updated(conn: sqlite3.Connection, updated_at: str) -> None:
+    conn.execute(
+        'INSERT INTO overlay_state (id, updated_at) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET updated_at = excluded.updated_at',
+        (updated_at,),
+    )
+
+
+def get_chunk_vectors(conn: sqlite3.Connection, file_path: str) -> dict[str, bytes]:
+    """Each of a file's chunks as text mapped to its stored embedding, from one store."""
+    rows = conn.execute(
+        'SELECT c.text, v.embedding FROM main.chunk c JOIN main.vec_chunks v ON v.rowid = c.id WHERE c.file_path = ?',
+        (file_path,),
+    )
+    return {row[0]: row[1] for row in rows}
+
+
+def get_file_states(conn: sqlite3.Connection, prefix: str) -> dict[str, tuple[str, float]]:
+    """Content hash and mtime of every file one store holds under a path prefix."""
+    rows = conn.execute(
+        "SELECT file_path, content_hash, mtime FROM main.indexed_file WHERE status = 'ok' AND substr(file_path, 1, ?) = ?",
+        (len(prefix), prefix),
+    )
+    return {row[0]: (row[1], row[2]) for row in rows}
+
+
+def get_tombstoned_paths(conn: sqlite3.Connection, prefix: str) -> set[str]:
+    return {row[0] for row in conn.execute('SELECT file_path FROM tombstone WHERE substr(file_path, 1, ?) = ?', (len(prefix), prefix))}
+
+
+def get_overlay_paths(conn: sqlite3.Connection, prefix: str) -> list[str]:
+    """Every path the overlay holds under a prefix, as rows or as a tombstone."""
+    rows = conn.execute(
+        'SELECT file_path FROM indexed_file WHERE substr(file_path, 1, ?) = ?'
+        ' UNION SELECT file_path FROM tombstone WHERE substr(file_path, 1, ?) = ?',
+        (len(prefix), prefix, len(prefix), prefix),
+    )
+    return [row[0] for row in rows]
+
+
+def set_overlay_branch(conn: sqlite3.Connection, prefix: str, branch: str) -> int:
+    return conn.execute(
+        'UPDATE indexed_file SET branch = ? WHERE substr(file_path, 1, ?) = ? AND branch IS NOT ?', (branch, len(prefix), prefix, branch)
+    ).rowcount
+
+
+def delete_overlay_label(conn: sqlite3.Connection, repo: str) -> int:
+    """Remove every row and tombstone the overlay holds under one label. Returns the file count."""
+    paths = [
+        row[0]
+        for row in conn.execute(
+            'SELECT file_path FROM indexed_file WHERE repo = ? UNION SELECT file_path FROM tombstone WHERE repo = ?', (repo, repo)
+        )
+    ]
+    for path in paths:
+        clear_overlay_file(conn, path)
+    conn.commit()
+    return len(paths)
+
+
+def compact_overlay(conn: sqlite3.Connection) -> dict:
+    """Drop every overlay row the base at DB_PATH now holds the same or newer content for.
+
+    Newer by the file's mtime when it was read, which covers a save made while `indy watch`
+    was down: the run embedded it and the overlay's older row would otherwise shadow it. A row
+    the run read an older version of stays. A tombstone stays while the base still holds its
+    path, and goes once the run has pruned it. Worktree rows always stay, because no full
+    index covers a worktree.
+
+    One write transaction, so a save landing mid-compaction is never deleted: `indy watch`
+    writes the new content either before the comparison reads it or after the deletes commit.
+    """
+    conn.commit()
+    conn.execute('ATTACH DATABASE ? AS base', (file_uri(DB_PATH, 'ro'),))
+    try:
+        conn.execute('BEGIN IMMEDIATE')
+        covered = [
+            row[0]
+            for row in conn.execute(
+                """
+                SELECT o.file_path FROM main.indexed_file o
+                JOIN base.indexed_file b ON b.file_path = o.file_path
+                WHERE o.branch IS NULL AND b.status = 'ok' AND (b.content_hash = o.content_hash OR b.mtime >= o.mtime)
+                """
+            )
+        ]
+        for path in covered:
+            clear_overlay_file(conn, path)
+        buried = conn.execute('DELETE FROM main.tombstone WHERE file_path NOT IN (SELECT file_path FROM base.indexed_file)').rowcount
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute('DETACH DATABASE base')
+    return {'files': len(covered), 'tombstones': buried}
+
+
+def get_overlay_summary(conn: sqlite3.Connection, scope: set[str] | None = None) -> dict | None:
+    """How many files the attached overlay holds within scope, and when it was last written."""
+    if not has_overlay(conn):
+        return None
+    labels = [row[0] for row in conn.execute('SELECT repo FROM overlay.indexed_file UNION ALL SELECT repo FROM overlay.tombstone')]
+    updated = conn.execute('SELECT updated_at FROM overlay.overlay_state').fetchone()
+    return {
+        'files': sum(1 for label in labels if scope is None or label in scope),
+        'updated_at': updated[0] if updated else None,
+    }
 
 
 # ── indexed_file ──────────────────────────────────────────────────────────────
@@ -229,12 +507,20 @@ def insert_chunk(conn: sqlite3.Connection, data: dict) -> int:
     return cursor.lastrowid  # type: ignore[return-value]
 
 
-def insert_chunk_embedding(conn: sqlite3.Connection, chunk_id: int, embedding: list[float]) -> None:
-    """Store the float32 embedding for a chunk. rowid must match chunk.id."""
-    conn.execute(
-        'INSERT INTO vec_chunks(rowid, embedding) VALUES (?, ?)',
-        (chunk_id, sqlite_vec.serialize_float32(embedding)),
+def insert_chunk_embedding(conn: sqlite3.Connection, chunk_id: int, embedding: list[float] | bytes) -> None:
+    """Store the float32 embedding for a chunk, or one already serialized. rowid must match chunk.id."""
+    blob = embedding if isinstance(embedding, bytes) else sqlite_vec.serialize_float32(embedding)
+    conn.execute('INSERT INTO vec_chunks(rowid, embedding) VALUES (?, ?)', (chunk_id, blob))
+
+
+def nearest_chunk_ids(conn: sqlite3.Connection, schema: str, query: bytes, limit: int) -> list[tuple[float, int]]:
+    """KNN over one store's vectors, as (distance, chunk id), with an overlay id negated as its view presents it."""
+    sign = -1 if schema == 'overlay' else 1
+    rows = conn.execute(
+        f'SELECT v.rowid, v.distance FROM {schema}.vec_chunks v WHERE v.embedding MATCH ? ORDER BY v.distance LIMIT ?',
+        (query, limit),
     )
+    return [(row['distance'], sign * row['rowid']) for row in rows]
 
 
 def search_chunks(
@@ -250,24 +536,22 @@ def search_chunks(
     repo: exact single-repo filter (existing behavior).
     repos: set of repo names to include (for owned/reference filtering).
     If both are set, repo takes precedence.
+
+    With an overlay attached, each store is searched on its own and the hits merged by
+    distance. A vec0 MATCH needs the virtual table itself, so no view can merge them. A base
+    hit in a file the overlay holds finds no row in the `chunk` view and is dropped there.
     """
     # Oversample to ensure enough results survive metadata filtering
     candidate_limit = min(limit * 20, 1000)
+    query = sqlite_vec.serialize_float32(embedding)
 
-    rows = conn.execute(
-        """
-        SELECT v.rowid, v.distance
-        FROM vec_chunks v
-        WHERE v.embedding MATCH ?
-        ORDER BY v.distance
-        LIMIT ?
-        """,
-        (sqlite_vec.serialize_float32(embedding), candidate_limit),
-    ).fetchall()
+    hits = nearest_chunk_ids(conn, 'main', query, candidate_limit)
+    if has_overlay(conn):
+        hits = sorted(hits + nearest_chunk_ids(conn, 'overlay', query, candidate_limit))
 
     results = []
-    for row in rows:
-        chunk = conn.execute('SELECT * FROM chunk WHERE id = ?', (row['rowid'],)).fetchone()
+    for distance, chunk_id in hits:
+        chunk = conn.execute('SELECT * FROM chunk WHERE id = ?', (chunk_id,)).fetchone()
         if chunk is None:
             continue
         if repo and chunk['repo'] != repo:
@@ -276,7 +560,7 @@ def search_chunks(
             continue
         if language and chunk['language'] != language:
             continue
-        results.append({**dict(chunk), 'distance': row['distance']})
+        results.append({**dict(chunk), 'distance': distance})
         if len(results) >= limit:
             break
 

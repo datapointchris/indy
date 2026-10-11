@@ -2,14 +2,19 @@
 The CLI is a thin wrapper around these functions."""
 
 import datetime as dt
+import filecmp
 import hashlib
 import sqlite3
 import subprocess
+import threading
+import time
 from collections.abc import Callable
 from collections.abc import Iterator
+from contextlib import closing
 from contextlib import contextmanager
 from dataclasses import asdict
 from dataclasses import dataclass
+from dataclasses import replace
 from pathlib import Path
 
 import httpx2
@@ -36,42 +41,63 @@ from indy.config import SKIP_FILES
 from indy.config import compact_path
 from indy.config import expand_path
 from indy.config import setting_source
+from indy.repos import EXEMPLAR
+from indy.repos import OWNED
 from indy.repos import all_index_targets
 from indy.repos import get_exemplar_repo_names
 from indy.repos import get_owned_repo_names
 from indy.repos import get_target_by_name
 from indy.repos import is_excluded
+from indy.storage import IndexNotFoundError
+from indy.storage import clear_overlay_file
 from indy.storage import commit_working_db
+from indy.storage import compact_overlay
 from indy.storage import delete_error_files
 from indy.storage import delete_file_chunks
 from indy.storage import delete_file_references
 from indy.storage import delete_indexed_file
+from indy.storage import delete_overlay_label
 from indy.storage import delete_repo
 from indy.storage import discard_working_db
 from indy.storage import finish_index_run
+from indy.storage import get_chunk_vectors
 from indy.storage import get_chunks_by_symbol
 from indy.storage import get_error_files
+from indy.storage import get_file_states
 from indy.storage import get_index_stats
 from indy.storage import get_indexed_file
 from indy.storage import get_indexed_repos
 from indy.storage import get_last_scans
 from indy.storage import get_member_callers
+from indy.storage import get_overlay_paths
+from indy.storage import get_overlay_summary
 from indy.storage import get_read_db
 from indy.storage import get_recent_runs
 from indy.storage import get_repo_file_paths
 from indy.storage import get_repo_scan_history
 from indy.storage import get_symbol_callees
 from indy.storage import get_symbol_callers
+from indy.storage import get_tombstone
+from indy.storage import get_tombstoned_paths
 from indy.storage import index_size_bytes as index_size_bytes
 from indy.storage import insert_chunk
 from indy.storage import insert_chunk_embedding
+from indy.storage import insert_overlay_file
 from indy.storage import insert_references
 from indy.storage import is_indexed_class
+from indy.storage import mark_overlay_updated
+from indy.storage import open_base_readonly
+from indy.storage import open_overlay_db
 from indy.storage import open_working_db
+from indy.storage import overlay_path
+from indy.storage import put_tombstone
 from indy.storage import search_chunks
 from indy.storage import set_extractor_version
+from indy.storage import set_overlay_branch
 from indy.storage import start_index_run
 from indy.storage import upsert_indexed_file
+from indy.watch import WorkQueue
+from indy.watch import watch_changes
 
 INDEXABLE_EXTENSIONS = CODE_EXTENSIONS | DOC_EXTENSIONS | CONFIG_EXTENSIONS
 
@@ -230,6 +256,8 @@ def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[Ind
     and a CLI that says nothing during them looks hung. They are named for what the run is
     doing rather than for the copy and rename that implement it, since the caller announcing
     them is writing for someone watching an index, not reading this file.
+
+    Once the new index is in place, the overlay drops every file it now matches.
     """
     if on_stage:
         on_stage('snapshot')
@@ -238,6 +266,7 @@ def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[Ind
         yield IndexSession(conn)
     except KeyboardInterrupt:
         commit_working_db(conn)
+        compact_live_overlay()
         raise
     except BaseException:
         discard_working_db(conn)
@@ -245,6 +274,7 @@ def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[Ind
     if on_stage:
         on_stage('save')
     commit_working_db(conn)
+    compact_live_overlay()
 
 
 def prune_missing_files(conn: sqlite3.Connection, repo_name: str, root: Path) -> int:
@@ -367,9 +397,8 @@ def index_into(
                 language = detect_language(str(filepath), content)
                 chunks = chunk_file(db_path, content, repo_name)
 
-                if not chunks:
-                    continue
-
+                # A file that chunks to nothing still gets its manifest row, so its old chunks go
+                # and the next run skips it, and the overlay can find this content in the base.
                 delete_file_chunks(conn, db_path)
                 replace_references(conn, db_path, content)
 
@@ -495,11 +524,446 @@ def index_all(
         ]
 
 
+# ── live overlay ──────────────────────────────────────────────────────────────
+
+# ollama unloads a model five minutes after its last request unless told otherwise.
+KEEP_WARM_SECONDS = 240
+
+
+@dataclass(frozen=True)
+class LiveRoot:
+    """A directory `indy watch` keeps current, and the label its files index under.
+
+    A linked worktree carries its branch and the main checkout it belongs to. Its files index
+    under the repo's own label, and only where they differ from the main checkout's: an
+    unchanged worktree file is the same code, and indexing it would return every hit twice.
+    """
+
+    path: Path
+    label: str
+    exclude: tuple[str, ...] = ()
+    branch: str | None = None
+    checkout: Path | None = None
+
+
+@dataclass(frozen=True)
+class LiveChange:
+    """What updating one file did to the overlay.
+
+    action is 'indexed', 'removed', or 'restored' when the file is back to the content a read
+    would get without the overlay, so the overlay stops holding it.
+    """
+
+    file_path: str
+    label: str
+    branch: str | None
+    action: str
+    embedded: int = 0
+    reused: int = 0
+    seconds: float = 0.0
+
+
+def list_worktrees(checkout: Path) -> list[tuple[Path, str]]:
+    """A checkout's linked worktrees, each with its branch. Empty for anything that is not a git repo."""
+    result = subprocess.run(['git', 'worktree', 'list', '--porcelain'], cwd=checkout, capture_output=True, text=True)
+    if result.returncode != 0:
+        return []
+    main = checkout.resolve()
+    worktrees = []
+    for block in result.stdout.split('\n\n'):
+        fields = {key: value for key, _, value in (line.partition(' ') for line in block.splitlines())}
+        path = Path(fields.get('worktree', ''))
+        if not path.is_absolute() or 'bare' in fields or 'prunable' in fields or path.resolve() == main or not path.is_dir():
+            continue
+        worktrees.append((path, fields['branch'].removeprefix('refs/heads/') if 'branch' in fields else 'detached'))
+    return worktrees
+
+
+def live_roots() -> list[LiveRoot]:
+    """Every root `indy watch` keeps current: each target but the exemplar clones, and each owned repo's worktrees.
+
+    Exemplars change only when pulled, which the nightly full index covers.
+    """
+    roots = []
+    for target in all_index_targets():
+        if target.kind == EXEMPLAR:
+            continue
+        roots.append(LiveRoot(target.path, target.name, target.exclude))
+        if target.kind == OWNED:
+            roots += [LiveRoot(path, target.name, target.exclude, branch, target.path) for path, branch in list_worktrees(target.path)]
+    return roots
+
+
+def root_for(path: Path, roots: list[LiveRoot]) -> LiveRoot | None:
+    """The innermost root holding path."""
+    return max((root for root in roots if path.is_relative_to(root.path)), key=lambda root: len(root.path.parts), default=None)
+
+
+def is_worktree_event(path: Path) -> bool:
+    """Whether path records a worktree being added, removed or switched: `.git/worktrees/<name>` itself, or its HEAD.
+
+    The rest of that directory changes on every `git status` run inside the worktree.
+    """
+    parts = path.parts
+    for at in range(len(parts) - 2):
+        if parts[at] == '.git' and parts[at + 1] == 'worktrees':
+            return parts[at + 3 :] in ((), ('HEAD',))
+    return False
+
+
+def could_be_indexed(path: Path, root: LiveRoot) -> bool:
+    """Whether a path under root falls outside SKIP_DIRS and the root's excludes. Asks nothing of the disk."""
+    return not is_in_skip_dir(path, root.path) and not is_excluded(path.relative_to(root.path).as_posix(), root.exclude)
+
+
+def drop_gitignored(root: Path, paths: list[Path]) -> list[Path]:
+    """paths without the ones root's gitignore rules exclude. Unchanged when root is not a git repo.
+
+    The same rule the full index follows through `git ls-files --exclude-standard`: a tracked
+    file is never ignored, whatever .gitignore says. A root that has itself been removed, as a
+    worktree is, passes its deletions through for update_overlay to drop.
+    """
+    if not root.is_dir():
+        return paths
+    result = subprocess.run(['git', 'check-ignore', '--stdin'], cwd=root, input='\n'.join(map(str, paths)), capture_output=True, text=True)
+    if result.returncode not in (0, 1):
+        return paths
+    ignored = {Path(line) for line in result.stdout.splitlines()}
+    return [path for path in paths if path not in ignored]
+
+
+@contextmanager
+def base_reader() -> Iterator[sqlite3.Connection | None]:
+    """The base alone, read-only, or None on a machine that has no index yet."""
+    try:
+        conn = open_base_readonly()
+    except IndexNotFoundError:
+        yield None
+        return
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def read_text(path: Path) -> str:
+    return path.read_text(encoding='utf-8', errors='ignore')
+
+
+def remove_from_overlay(conn: sqlite3.Connection, db_path: str, root: LiveRoot) -> LiveChange | None:
+    """A file gone from disk: drop what the overlay holds for it, and hide any rows the base has."""
+    if get_tombstone(conn, db_path):
+        return None
+    held = clear_overlay_file(conn, db_path)
+    in_base = False
+    if root.checkout is None:
+        with base_reader() as base:
+            in_base = base is not None and get_indexed_file(base, db_path) is not None
+    if not (held or in_base):
+        return None
+    now = dt.datetime.now(dt.UTC).isoformat()
+    if in_base:
+        put_tombstone(conn, db_path, root.label, now)
+    mark_overlay_updated(conn, now)
+    conn.commit()
+    return LiveChange(db_path, root.label, root.branch, 'removed')
+
+
+def update_overlay(conn: sqlite3.Connection, path: Path, root: LiveRoot) -> LiveChange | None:
+    """Bring the overlay's rows for one file in line with the file on disk. Returns what changed, or None.
+
+    The overlay holds a file only while its content differs from what a read gets without it:
+    the base's for a main checkout's file, the main checkout's for a worktree's. A file saved
+    back to that content leaves the overlay rather than shadowing it with a copy.
+
+    Only chunks whose text is new are embedded. Every other chunk reuses the vector already
+    stored for that text — in the overlay, in the base, or for a worktree in the main
+    checkout's rows — since an embedding depends on nothing but the text.
+    """
+    db_path = compact_path(str(path))
+    try:
+        if not path.exists():
+            return remove_from_overlay(conn, db_path, root)
+        if not path.is_file() or not should_index(path):
+            return None
+        content = read_text(path)
+        mtime = path.stat().st_mtime
+    except FileNotFoundError:
+        return remove_from_overlay(conn, db_path, root)
+
+    content_hash = compute_content_hash(content)
+    held = get_indexed_file(conn, db_path)
+    if held and held['content_hash'] == content_hash:
+        return None
+
+    twin = root.checkout / path.relative_to(root.path) if root.checkout else None
+    vector_paths = [db_path] if twin is None else [compact_path(str(twin)), db_path]
+    vectors: dict[str, bytes | list[float]] = {}
+    with base_reader() as base:
+        if twin is None:
+            baseline = get_indexed_file(base, db_path) if base else None
+            unchanged = baseline is not None and baseline['content_hash'] == content_hash
+        else:
+            unchanged = twin.is_file() and compute_content_hash(read_text(twin)) == content_hash
+        for vector_path in vector_paths:
+            vectors |= get_chunk_vectors(base, vector_path) if base else {}
+            vectors |= get_chunk_vectors(conn, vector_path)
+
+    if unchanged:
+        if not clear_overlay_file(conn, db_path):
+            return None
+        mark_overlay_updated(conn, dt.datetime.now(dt.UTC).isoformat())
+        conn.commit()
+        return LiveChange(db_path, root.label, root.branch, 'restored')
+
+    chunks = chunk_file(db_path, content, root.label)
+    embedded = 0
+    for chunk in chunks:
+        if chunk.text not in vectors:
+            vectors[chunk.text] = embed_text(chunk.text)
+            embedded += 1
+    language = detect_language(str(path), content)
+    now = dt.datetime.now(dt.UTC).isoformat()
+
+    clear_overlay_file(conn, db_path)
+    for chunk in chunks:
+        chunk_id = insert_chunk(
+            conn,
+            {
+                'file_path': db_path,
+                'repo': root.label,
+                'language': language,
+                'symbol_name': chunk.symbol_name,
+                'symbol_type': chunk.symbol_type,
+                'module': chunk.module,
+                'text': chunk.text,
+            },
+        )
+        insert_chunk_embedding(conn, chunk_id, vectors[chunk.text])
+    refs = extract_references(db_path, content)
+    if refs:
+        insert_references(conn, [asdict(r) for r in refs])
+    insert_overlay_file(
+        conn,
+        {
+            'repo': root.label,
+            'file_path': db_path,
+            'language': language,
+            'mtime': mtime,
+            'content_hash': content_hash,
+            'chunk_count': len(chunks),
+            'indexed_at': now,
+            'extractor_version': EXTRACTOR_VERSION,
+            'branch': root.branch,
+        },
+    )
+    mark_overlay_updated(conn, now)
+    conn.commit()
+    return LiveChange(db_path, root.label, root.branch, 'indexed', embedded=embedded, reused=len(chunks) - embedded)
+
+
+def stale_live_paths(root: LiveRoot) -> list[Path]:
+    """Files under root that changed or went while nothing was watching: the backlog a watch starts with.
+
+    Compared by mtime against what a read sees, so an untouched file costs one stat. A
+    different mtime only queues the file; update_overlay hashes it and decides. A worktree file
+    byte-identical to the main checkout's is never queued, which is almost all of them. A
+    tombstoned file that is back on disk is queued, since its mtime can match the base's.
+
+    Nothing on a machine with no base yet. The first full index builds that, and catching up
+    against an empty base would embed the whole corpus into the overlay instead.
+    """
+    files = collect_indexable_files(root.path, root.exclude)
+    if not files:
+        return []
+    prefix = compact_path(str(root.path)).rstrip('/') + '/'
+    with base_reader() as base:
+        if base is None:
+            return []
+        known = get_file_states(base, prefix) if root.checkout is None else {}
+    with closing(open_overlay_db()) as overlay:
+        known |= get_file_states(overlay, prefix)
+        buried = get_tombstoned_paths(overlay, prefix)
+
+    stale = []
+    for path in files:
+        state = known.get(compact_path(str(path)))
+        try:
+            if state is not None and state[1] == path.stat().st_mtime:
+                continue
+            if state is None and root.checkout is not None:
+                twin = root.checkout / path.relative_to(root.path)
+                if twin.is_file() and filecmp.cmp(path, twin, shallow=False):
+                    continue
+        except OSError:
+            pass
+        stale.append(path)
+    gone = [Path(expand_path(db_path)) for db_path in known if db_path not in buried and not Path(expand_path(db_path)).exists()]
+    revived = [Path(expand_path(db_path)) for db_path in buried if Path(expand_path(db_path)).exists()]
+    return stale + gone + revived
+
+
+def compact_live_overlay() -> dict | None:
+    """Drop what the overlay holds that the base now matches. None on a machine with no overlay."""
+    if not overlay_path().exists():
+        return None
+    with closing(open_overlay_db()) as conn:
+        return compact_overlay(conn)
+
+
+def warm_model() -> None:
+    """Load the embedding model and keep it loaded past ollama's default idle unload."""
+    httpx2.post(f'{OLLAMA_HOST}/api/embed', json={'model': OLLAMA_MODEL, 'input': 'warm', 'keep_alive': '10m'}, timeout=30.0)
+
+
+def drop_worktree(conn: sqlite3.Connection, root: Path) -> int:
+    """Remove every overlay row under a worktree that no longer exists. Returns the file count."""
+    paths = get_overlay_paths(conn, compact_path(str(root)).rstrip('/') + '/')
+    for path in paths:
+        clear_overlay_file(conn, path)
+    conn.commit()
+    return len(paths)
+
+
+def watch(
+    stop: threading.Event,
+    on_change: Callable[[LiveChange], None],
+    on_note: Callable[[str], None],
+    on_problem: Callable[[str], None],
+) -> None:
+    """Keep the overlay current with every save under every live root, until stop is set.
+
+    The calling thread watches the filesystem and queues each changed path, newest first. One
+    worker thread indexes the queue a file at a time. A second walks every root once at the
+    start to queue what changed while nothing was watching, behind any live save. A third
+    keeps the model loaded, so the first save after a quiet hour does not wait for it.
+
+    A worktree being added, removed or switched lists the roots again. When they differ, a
+    removed worktree's rows are dropped, a switched one's relabeled, and the watch restarts
+    over the new set.
+    """
+    queue = WorkQueue()
+    current = {'roots': live_roots()}
+
+    def describe(roots: list[LiveRoot]) -> str:
+        worktrees = sum(1 for root in roots if root.branch is not None)
+        return f'{len(roots) - worktrees} roots and {worktrees} worktrees'
+
+    def drain() -> None:
+        with closing(open_overlay_db()) as conn:
+            while not stop.is_set():
+                path = queue.pop(timeout=0.5)
+                root = root_for(path, current['roots']) if path else None
+                if path is None or root is None:
+                    continue
+                started = time.perf_counter()
+                try:
+                    change = update_overlay(conn, path, root)
+                except Exception as exc:
+                    conn.rollback()
+                    on_problem(f'{compact_path(str(path))}: {exc}')
+                    continue
+                if change:
+                    on_change(replace(change, seconds=time.perf_counter() - started))
+
+    def catch_up(roots: list[LiveRoot]) -> None:
+        for root in roots:
+            if stop.is_set():
+                return
+            try:
+                stale = stale_live_paths(root)
+            except Exception as exc:
+                on_problem(f'catching up {compact_path(str(root.path))}: {exc}')
+                continue
+            if stale:
+                queue.push_oldest(stale)
+                on_note(f'Catching up {len(stale)} file{"" if len(stale) == 1 else "s"} in {compact_path(str(root.path))}')
+
+    def keep_warm() -> None:
+        while not stop.is_set():
+            try:
+                warm_model()
+            except Exception as exc:
+                on_problem(f'warming {OLLAMA_MODEL}: {exc}')
+            stop.wait(KEEP_WARM_SECONDS)
+
+    on_note(f'Watching {describe(current["roots"])}. Overlay: {overlay_path()}')
+    worker = threading.Thread(target=drain, name='indy-watch-index', daemon=True)
+    for thread in (
+        worker,
+        threading.Thread(target=keep_warm, daemon=True),
+        threading.Thread(target=catch_up, args=(current['roots'],), daemon=True),
+    ):
+        thread.start()
+
+    try:
+        while not stop.is_set():
+            roots = current['roots']
+            for batch in watch_changes([root.path for root in roots], accepts_live_event(roots), stop):
+                by_root: dict[Path, list[Path]] = {}
+                for path in batch:
+                    root = root_for(path, roots)
+                    if root is not None and not is_worktree_event(path):
+                        by_root.setdefault(root.path, []).append(path)
+                for root_path, paths in by_root.items():
+                    queue.push_newest(drop_gitignored(root_path, paths))
+                if any(is_worktree_event(path) for path in batch):
+                    fresh = live_roots()
+                    if fresh != roots:
+                        reconcile_worktrees(roots, fresh, catch_up, on_note)
+                        current['roots'] = fresh
+                        on_note(f'Watching {describe(fresh)}')
+                        break
+    finally:
+        stop.set()
+        worker.join()
+
+
+def accepts_live_event(roots: list[LiveRoot]) -> Callable[[Path], bool]:
+    """The filter a watch over roots applies to each raw event, before anything reads the disk."""
+
+    def accepts(path: Path) -> bool:
+        root = root_for(path, roots)
+        return root is not None and (is_worktree_event(path) or could_be_indexed(path, root))
+
+    return accepts
+
+
+def reconcile_worktrees(
+    before: list[LiveRoot], after: list[LiveRoot], catch_up: Callable[[list[LiveRoot]], None], on_note: Callable[[str], None]
+) -> None:
+    """Bring the overlay's worktree rows in line with a new list of roots, and catch up the worktrees it added."""
+    was = {root.path: root for root in before if root.branch is not None}
+    now = {root.path: root for root in after if root.branch is not None}
+    with closing(open_overlay_db()) as conn:
+        for path in was.keys() - now.keys():
+            on_note(f'Worktree {compact_path(str(path))} is gone; dropped {drop_worktree(conn, path)} files')
+        for path in was.keys() & now.keys():
+            branch = now[path].branch
+            if branch is not None and branch != was[path].branch:
+                set_overlay_branch(conn, compact_path(str(path)).rstrip('/') + '/', branch)
+                conn.commit()
+    added = [now[path] for path in now.keys() - was.keys()]
+    if added:
+        threading.Thread(target=catch_up, args=(added,), daemon=True).start()
+
+
 def expand_result_paths(results: list[dict], key: str = 'file_path') -> list[dict]:
     """Expand ~-prefixed paths in a list of result dicts back to absolute paths."""
     for r in results:
         if key in r:
             r[key] = expand_path(r[key])
+    return results
+
+
+def located(results: list[dict], key: str = 'file_path') -> list[dict]:
+    """Results with absolute paths, each carrying the branch of the worktree it came from, or None.
+
+    Only an overlay row can name a branch, so a read with no overlay sets every one to None
+    rather than leaving the key out.
+    """
+    for r in expand_result_paths(results, key):
+        r.setdefault('branch', None)
     return results
 
 
@@ -523,7 +987,7 @@ def search(
     embedding = embed_text(query)
     conn = get_read_db()
     try:
-        return expand_result_paths(search_chunks(conn, embedding, repo=repo, language=language, limit=limit, repos=repos))
+        return located(search_chunks(conn, embedding, repo=repo, language=language, limit=limit, repos=repos))
     finally:
         conn.close()
 
@@ -531,7 +995,7 @@ def search(
 def search_symbol(name: str, repo: str | None = None) -> list[dict]:
     conn = get_read_db()
     try:
-        return expand_result_paths(get_chunks_by_symbol(conn, name, repo=repo))
+        return located(get_chunks_by_symbol(conn, name, repo=repo))
     finally:
         conn.close()
 
@@ -578,16 +1042,32 @@ def index_freshness(repo: str | None = None, owned: bool | None = None) -> dict 
     scope = {repo} if repo else resolve_ownership_filter(owned)
     conn = get_read_db()
     try:
-        return summarize_freshness(get_last_scans(conn), scope)
+        return read_freshness(conn, scope)
     finally:
         conn.close()
+
+
+def read_freshness(conn: sqlite3.Connection, scope: set[str] | None = None) -> dict | None:
+    """The base's horizon over scope, and what the overlay holds beyond it, or None for an overlay this machine lacks.
+
+    The overlay's count says how many files a read sees newer than the scan, and its age says
+    whether `indy watch` is still writing.
+    """
+    freshness = summarize_freshness(get_last_scans(conn), scope)
+    if freshness is None:
+        return None
+    live = get_overlay_summary(conn, scope)
+    if live is not None and live['updated_at']:
+        live['age_seconds'] = (dt.datetime.now(dt.UTC) - dt.datetime.fromisoformat(live['updated_at'])).total_seconds()
+    freshness['overlay'] = live
+    return freshness
 
 
 def get_status() -> dict:
     conn = get_read_db()
     try:
         stats = get_index_stats(conn)
-        stats['freshness'] = summarize_freshness(get_last_scans(conn))
+        stats['freshness'] = read_freshness(conn)
         stats['recent_runs'] = get_recent_runs(conn, limit=5)
         if stats['error_files']:
             stats['error_file_details'] = expand_result_paths(get_error_files(conn))
@@ -653,7 +1133,11 @@ def forget_repo(repo: str, on_stage: Callable[[str], None] | None = None) -> dic
     confirmation, as `clear_errors` does not either.
     """
     with index_session(on_stage=on_stage) as session:
-        return session.forget_repo(repo)
+        removed = session.forget_repo(repo)
+    if overlay_path().exists():
+        with closing(open_overlay_db()) as overlay:
+            removed['files'] += delete_overlay_label(overlay, repo)
+    return removed
 
 
 def indexed_repo_names() -> list[str]:
@@ -716,9 +1200,9 @@ def get_dependencies(symbol_name: str, repo: str | None = None, direction: str =
     try:
         result: dict = {}
         if direction in ('callers', 'both'):
-            result['callers'] = expand_result_paths(find_callers(conn, symbol_name, repo=repo), key='source_file')
+            result['callers'] = located(find_callers(conn, symbol_name, repo=repo), key='source_file')
         if direction in ('callees', 'both'):
-            result['callees'] = expand_result_paths(find_callees(conn, symbol_name, repo=repo), key='source_file')
+            result['callees'] = located(find_callees(conn, symbol_name, repo=repo), key='source_file')
         return result
     finally:
         conn.close()

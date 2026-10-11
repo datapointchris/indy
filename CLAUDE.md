@@ -10,8 +10,26 @@ Local-first: sqlite-vec + ollama. No external APIs, no separate vector DB proces
 The database is `$XDG_DATA_HOME/indy/indy.db`. Override the data dir with `data_dir` in
 config.toml or the `INDY_DIR` env var.
 
-There is exactly one database, at `DB_PATH`, on every machine — whether this machine built
-it or a syncer delivered it. Nothing else is read, and nothing else needs reasoning about.
+A read sees two stores. The base is `DB_PATH`, on every machine, whether this machine built
+it or a syncer delivered it. The overlay is `$XDG_STATE_HOME/indy/overlay.db`, which exists
+only on a machine running `indy watch` and holds each save made since the base was built.
+
+**For any file the overlay holds, as rows or as a tombstone, the base's rows are hidden.**
+`get_read_db` attaches the overlay and creates temp views named `chunk`, `indexed_file` and
+`symbol_reference`. SQLite resolves an unqualified name in the temp schema first, so every
+query in `storage.py` reads the merged store without naming either one. Overlay ids are
+negated in the views, which keeps an id unique across both. Vector search is the exception:
+a vec0 MATCH needs the virtual table itself, so `search_chunks` runs KNN on each store and
+merges by distance. A machine with no overlay attaches nothing and reads the base as before.
+
+**The overlay is written in place, and that is safe only because nothing syncs it.** It
+lives outside `data_dir`, which is the directory a syncer replicates. Everything below about
+never writing `indy.db` is about a file under a syncer, and the overlay is never under one.
+
+**A full index takes back what it covers.** After a session swaps in a new base, the
+overlay drops every row whose content the base now holds, or whose file the base read at
+the same or a later mtime, and every tombstone whose path the run pruned. Linked worktree
+rows stay, because no full index walks a worktree.
 
 ## The index is replaced, never written
 
@@ -84,6 +102,12 @@ which leaves stale content rather than losing live content. The prune is also sk
 entirely when the walk finds nothing, since an unmounted root makes every path missing at
 once. `indy forget` clears a label that really did go.
 
+**`indy watch` covers every target but the exemplar clones**, which change only when pulled.
+It also covers each owned repo's linked worktrees, found with `git worktree list` rather
+than by any directory convention. A worktree file indexes under the repo's label and carries
+its branch, and only while it differs from the main checkout's copy. An identical copy would
+return every hit twice. A removed worktree's rows drop when git stops listing it.
+
 Active repos from `repos_registry`, exemplar clones from `exemplar_registry`, plus any
 `[[extra_paths]]` in config.toml. All three default to nothing outside indy's own XDG dirs —
 a default that names a particular machine's layout is the bug this arrangement exists to
@@ -104,8 +128,13 @@ ships 14 doc translations, so `docs/*/**` then `!docs/en/**` keeps the 154 Engli
   correct [0,1] similarity scores. L2 would produce incorrect rankings for non-normalized vectors.
 - **KNN oversample + Python filter** — vec0 MATCH can't filter on metadata; oversample 20× then
   filter by repo/language in Python.
-- **No git post-commit hook** — an on-demand `indy index`, scheduled or run by hand, covers the
-  use case. Per-repo hook management adds maintenance overhead for marginal gain.
+- **No git post-commit hook** — `indy watch` sees every save, committed or not, and a
+  scheduled `indy index` rebuilds the base. Per-repo hook management adds maintenance
+  overhead and would still miss uncommitted work.
+- **A save re-embeds only the chunks whose text is new** — every other chunk reuses the
+  vector already stored for that text, from the overlay, the base, or a worktree's main
+  checkout. An embedding depends on nothing but its text, so editing one function embeds
+  one chunk rather than the whole file.
 - **symbol_reference is Python-only, and syntactic** — tree-sitter already parses Go/TS/Rust/Lua
   for chunking; reference extraction for those languages is deferred. Beside `call`, `import` and
   `inherit` rows, a name used as any other value is a `reference` row. That is the only trace a

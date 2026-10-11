@@ -32,6 +32,7 @@ def xdg_base(env_var: str, *fallback: str) -> Path:
 
 CONFIG_HOME = xdg_base('XDG_CONFIG_HOME', '.config')
 DATA_HOME = xdg_base('XDG_DATA_HOME', '.local', 'share')
+STATE_HOME = xdg_base('XDG_STATE_HOME', '.local', 'state')
 
 CONFIG_DIR = CONFIG_HOME / 'indy'
 CONFIG_PATH = CONFIG_DIR / 'config.toml'
@@ -144,6 +145,11 @@ LOG_PATH = INDY_DIR / 'indy.log'
 # rather than in a temp directory because os.replace is only atomic within one filesystem,
 # and that atomicity is the point — see storage.open_working_db().
 WORKING_DB_PATH = INDY_DIR / 'indy.db.building'
+
+# What `indy watch` writes each save into, read alongside DB_PATH. Deliberately not under
+# data_dir: that directory is the one a syncer replicates, and the overlay is written in
+# place, which is the thing a replicated file must never be. See storage.attach_overlay().
+OVERLAY_PATH = STATE_HOME / 'indy' / 'overlay.db'
 
 # Registry locations default to indy-owned paths. Sharing one registry with other tools
 # is an arrangement between those tools, so it belongs in config.toml on the machines

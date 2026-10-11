@@ -321,6 +321,20 @@ def test_a_deleted_file_leaves_the_index_on_the_next_run(indy_dir, tmp_path, stu
     assert {Path(p).name for p in chunk_paths} == {'kept.md'}
 
 
+def test_a_file_emptied_since_the_last_run_loses_its_chunks(indy_dir, tmp_path, stub_embedding):
+    """An empty file chunks to nothing, which once skipped it whole and left the old chunks searchable."""
+    root = make_repo(tmp_path, **{'emptied.py': 'def old():\n    return 1\n'})
+    index_once(root)
+
+    (root / 'emptied.py').write_text('')
+    index_once(root)
+    second = index_once(root)
+
+    assert service.search_symbol('old') == []
+    assert {Path(p).name for p in indexed_paths()} == {'emptied.py'}
+    assert second['files_updated'] == 0
+
+
 def test_a_walk_that_finds_nothing_never_empties_the_label(indy_dir, tmp_path, monkeypatch, stub_embedding):
     """A moved root and a failed `git ls-files` both look like this, and both are far likelier
     than a target whose every file was deleted. Leaving ghosts is the safe direction; a label
