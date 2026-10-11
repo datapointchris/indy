@@ -151,6 +151,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
             text         TEXT NOT NULL
         );
 
+        CREATE INDEX IF NOT EXISTS idx_chunk_symbol ON chunk(symbol_name);
+
         CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
             embedding float[{EMBEDDING_DIM}] distance_metric=cosine
         );
@@ -514,27 +516,56 @@ def get_class_lineage(conn: sqlite3.Connection, class_name: str) -> set[str]:
     return {row[0] for row in rows}
 
 
+def get_class_heirs(conn: sqlite3.Connection, class_name: str, member: str) -> set[str]:
+    """Every class inheriting class_name's own `member`: its subclasses, down to any that defines one.
+
+    An override is a different method, so a subclass defining `member` ends the walk below it.
+    A definition is read from the chunk table, where each method is chunked as `Class.member`.
+    """
+    rows = conn.execute(
+        """
+        WITH RECURSIVE heirs(name) AS (
+            VALUES (?)
+            UNION
+            SELECT sr.source_symbol
+            FROM symbol_reference sr
+            JOIN heirs ON sr.target_symbol = heirs.name
+            WHERE sr.ref_type = 'inherit'
+              AND NOT EXISTS (SELECT 1 FROM chunk c WHERE c.symbol_name = sr.source_symbol || '.' || ?)
+        )
+        SELECT name FROM heirs
+        """,
+        (class_name, member),
+    )
+    return {row[0] for row in rows} - {class_name}
+
+
+def is_indexed_class(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute("SELECT 1 FROM chunk WHERE symbol_name = ? AND symbol_type = 'class' LIMIT 1", (name,)).fetchone() is not None
+
+
 def get_member_callers(conn: sqlite3.Connection, owner: str, member: str, repo: str | None = None) -> list[dict]:
     """What reaches `owner.member`, by five syntactic rules, each row labeled with the rule that matched.
 
-    - its ref_type: a row hinted with the owner's name, as `steps.apply(...)` is;
-    - `self`: `self.member` inside the owner or a class it inherits from;
-    - `typed`: `.member` on a parameter annotated with a class the owner inherits from;
+    - its ref_type: a row hinted with the owner's name, as `steps.apply(...)` is, which includes a
+      parameter annotated with the owner itself;
+    - `self`: `self.member` inside the owner, a class it inherits from, or a subclass that does
+      not override `member`;
+    - `typed`: `.member` on a parameter annotated with one of those classes other than the owner;
     - `module`: a bare `member` in a file named after the owner that does not import it;
-    - `candidate`: `.member` on a receiver nothing types, only when no rule above matched.
+    - `candidate`: `.member` called on a receiver nothing types. Listed after every resolved row,
+      when the owner is an indexed class or no rule above matched anything.
     """
     name = owner.rpartition('.')[2]
-    lineage = get_class_lineage(conn, owner) | get_class_lineage(conn, name)
-    ancestors = sorted(lineage - {owner, name})
+    classes = get_class_lineage(conn, owner) | get_class_lineage(conn, name) | get_class_heirs(conn, name, member)
+    related = sorted(classes - {owner, name})
 
     found = labeled(select_references(conn, f'sr.target_symbol = ? AND sr.target_module = ? AND {VALUE_USE}', (member, name), repo))
-    self_calls = select_references(conn, "sr.target_symbol = ? AND sr.target_module IN ('self', 'cls')", (member,), repo)
-    found += labeled([row for row in self_calls if any((row['source_symbol'] or '').startswith(f'{cls}.') for cls in lineage)], 'self')
-    if ancestors:
-        marks = ', '.join('?' * len(ancestors))
-        typed = select_references(
-            conn, f'sr.target_symbol = ? AND sr.target_module IN ({marks}) AND {VALUE_USE}', (member, *ancestors), repo
-        )
+    self_uses = select_references(conn, "sr.target_symbol = ? AND sr.target_module IN ('self', 'cls')", (member,), repo)
+    found += labeled([row for row in self_uses if any((row['source_symbol'] or '').startswith(f'{cls}.') for cls in classes)], 'self')
+    if related:
+        marks = ', '.join('?' * len(related))
+        typed = select_references(conn, f'sr.target_symbol = ? AND sr.target_module IN ({marks}) AND {VALUE_USE}', (member, *related), repo)
         found += labeled(typed, 'typed')
     bare = select_references(
         conn,
@@ -543,7 +574,7 @@ def get_member_callers(conn: sqlite3.Connection, owner: str, member: str, repo: 
         repo,
     )
     found += labeled([row for row in bare if Path(row['source_file']).stem == name], 'module')
-    if found:
+    if found and not is_indexed_class(conn, name):
         return found
 
     untyped = select_references(
@@ -553,9 +584,20 @@ def get_member_callers(conn: sqlite3.Connection, owner: str, member: str, repo: 
         (member,),
         repo,
     )
-    return labeled([row for row in untyped if not row['target_module'][:1].isupper()], 'candidate')
+    seen = {row['id'] for row in found}
+    return found + labeled([row for row in untyped if row['id'] not in seen and not row['target_module'][:1].isupper()], 'candidate')
 
 
-def get_symbol_callees(conn: sqlite3.Connection, source_symbol: str, repo: str | None = None) -> list[dict]:
-    """Return all calls made by source_symbol (i.e. what it calls)."""
-    return select_references(conn, "sr.source_symbol = ? AND sr.ref_type = 'call'", (source_symbol,), repo, order_by='sr.target_symbol')
+def get_symbol_callees(conn: sqlite3.Connection, source_symbol: str, repo: str | None = None, file_stem: str | None = None) -> list[dict]:
+    """Every call made inside source_symbol, and inside each of its keys when it names a module-level dict.
+
+    file_stem narrows the rows to files of that name, for a module function named `module.function`.
+    """
+    rows = select_references(
+        conn,
+        "(sr.source_symbol = ? OR substr(sr.source_symbol, 1, ?) = ?) AND sr.ref_type = 'call'",
+        (source_symbol, len(source_symbol) + 1, f'{source_symbol}['),
+        repo,
+        order_by='sr.target_symbol',
+    )
+    return [row for row in rows if file_stem is None or Path(row['source_file']).stem == file_stem]

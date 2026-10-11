@@ -40,12 +40,20 @@ class Provider:
     def install(self, item):
         raise NotImplementedError
 
+    def evidence(self, item):
+        return item
+
 
 class SystemConfigProvider(Provider):
+    @property
+    def label(self):
+        return 'system'
+
     def repair(self, item):
         return item
 
     def install(self, item):
+        self.evidence(item)
         return self.repair(item)
 
 
@@ -53,9 +61,16 @@ class StepProvider(SystemConfigProvider):
     def repair(self, item):
         return steps.apply(item)
 
+    def retry(self, item):
+        return {self.label: self.repair}
+
 
 def install_one(provider: 'Provider | None', item):
     return provider.install(item)
+
+
+def check(provider: StepProvider, item):
+    return provider.evidence(item)
 
 
 def install_each(providers, item):
@@ -91,19 +106,59 @@ def callers(symbol: str) -> list[tuple[str, str]]:
     return [(row['source_symbol'], row['via']) for row in service.get_dependencies(symbol, direction='callers')['callers']]
 
 
+def callees(symbol: str) -> list[tuple[str, str]]:
+    return [(row['source_symbol'], row['target_symbol']) for row in service.get_dependencies(symbol, direction='callees')['callees']]
+
+
 @pytest.mark.parametrize(
     ('symbol', 'expected'),
     [
-        ('write_wslconfig', [("STEPS['wslconfig']", 'reference')]),
-        ('StepProvider.repair', [('SystemConfigProvider.install', 'self')]),
-        ('SystemConfigProvider.install', [('install_one', 'typed')]),
-        ('steps.apply', [('StepProvider.repair', 'call'), ('apply_all', 'module'), ('test_apply', 'call')]),
-        ('Provider.uninstall', [('install_each', 'candidate')]),
+        pytest.param('write_wslconfig', [("STEPS['wslconfig']", 'reference')], id='a function reached only as a dict value'),
+        pytest.param(
+            'StepProvider.repair',
+            [('StepProvider.retry', 'self'), ('SystemConfigProvider.install', 'self')],
+            id='an override called through self in its base class, and passed as a bound method',
+        ),
+        pytest.param(
+            'SystemConfigProvider.repair',
+            [('SystemConfigProvider.install', 'self')],
+            id='a subclass that overrides the method keeps its self calls to itself',
+        ),
+        pytest.param(
+            'Provider.evidence',
+            [('SystemConfigProvider.install', 'self'), ('check', 'typed')],
+            id='a base-class method reached through a subclass self call and a subclass-annotated parameter',
+        ),
+        pytest.param('SystemConfigProvider.label', [('StepProvider.retry', 'self')], id='a property read through self in a subclass'),
+        pytest.param(
+            'SystemConfigProvider.install',
+            [('install_one', 'typed'), ('install_each', 'candidate')],
+            id='an untyped caller is listed as a candidate after the typed one',
+        ),
+        pytest.param(
+            'steps.apply',
+            [('StepProvider.repair', 'call'), ('apply_all', 'module'), ('test_apply', 'call')],
+            id='a module function, tests last',
+        ),
+        pytest.param('Provider.uninstall', [('install_each', 'candidate')], id='a method nothing types'),
+        pytest.param("STEPS['wslconfig']", [('apply', 'reference')], id='a dispatch entry pasted back from the output'),
     ],
 )
 def test_each_caller_is_found_by_the_rule_that_reaches_it(repo, symbol, expected):
-    """`install_each` calls `.install` on an untyped receiver, and is listed only where nothing typed matched."""
     assert callers(symbol) == expected
+
+
+@pytest.mark.parametrize(
+    ('symbol', 'expected'),
+    [
+        pytest.param('steps.apply_all', [('apply_all', 'apply')], id='a module function named module.function, as --help offers'),
+        pytest.param('StepProvider.repair', [('StepProvider.repair', 'apply')], id='a method'),
+        pytest.param('STEPS', [("STEPS['wslconfig']", 'unprivileged')], id='a dispatch table, across its keys'),
+        pytest.param("STEPS['wslconfig']", [("STEPS['wslconfig']", 'unprivileged')], id='a dispatch entry pasted back from the output'),
+    ],
+)
+def test_callees_resolve_for_every_name_deps_prints_or_offers(repo, symbol, expected):
+    assert callees(symbol) == expected
 
 
 def test_a_new_extractor_reaches_files_whose_content_did_not_change(repo, monkeypatch):

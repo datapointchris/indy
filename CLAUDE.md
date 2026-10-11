@@ -111,11 +111,17 @@ ships 14 doc translations, so `docs/*/**` then `!docs/en/**` keeps the 154 Engli
   `inherit` rows, a name used as any other value is a `reference` row. That is the only trace a
   function placed in a dispatch table leaves, since nothing calls it by name.
 - **`deps A.b` resolves receivers without a type checker** — it matches a module hint of `A`,
-  `self.b` in `A`'s class tree, `.b` on a parameter annotated with `A` or an ancestor, and a bare
-  `b` in a file named `A`. Every caller carries the rule that matched it as `via`. A call of `.b`
-  on an untyped receiver is listed as a `candidate` only when nothing else matched. Matching a
-  method by name alone buries the real caller among every unrelated `.install` in the index.
-  Exact resolution, overrides and inferred types are a type checker's job and stay out.
+  which includes a parameter annotated with `A` itself (labeled `call`); `self.b` in `A`, its
+  ancestors, or a subclass that does not override `b`; `.b` on a parameter annotated with one of
+  those other classes (`typed`); and a bare `b` in a file named `A`. A subclass that defines `b`
+  is cut off with everything below it, because its override is a different method. Every caller
+  carries the rule that matched it as `via`. A call of `.b` on an untyped receiver is a
+  `candidate`, listed after every resolved caller and counted apart from them in the header.
+  Matching a method by name alone buries the real caller among every unrelated `.install` in the
+  index. Exact resolution and inferred types are a type checker's job and stay out.
+- **An attribute read through `self`, `cls` or an annotated parameter is a `reference` row** —
+  a property read and a bound method passed as a callback have no other trace. A read through
+  any other local is skipped, since nothing says what class the local holds.
 - **Changing the extractor bumps `EXTRACTOR_VERSION`** — an unchanged file is skipped before it
   is embedded, so a new extractor would never reach it. A file whose stored version differs has
   its references re-extracted from the content the scan already read, keeping its vectors. The

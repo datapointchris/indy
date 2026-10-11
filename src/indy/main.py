@@ -472,10 +472,10 @@ def deps(
 ):
     """Find what calls a symbol or what it calls, using the Python reference graph.
 
-    Each caller says how it matched: call, reference (used as a value), self, typed (an
-    annotated parameter), module (a bare name in the owner's own file), or candidate. A
-    candidate is a call by method name on an untyped receiver, listed only when nothing
-    else matched.
+    Each caller says how it matched: call, reference (used as a value), self, typed (a
+    parameter annotated with a base class or a subclass of the owner), module (a bare name in
+    the owner's own file), or candidate. A candidate is a call by method name on an untyped
+    receiver, listed after every resolved caller.
     """
     if direction not in ('callers', 'callees', 'both'):
         console.print("[red]--direction must be 'callers', 'callees', or 'both'.[/red]")
@@ -492,14 +492,16 @@ def deps(
         console.print(f'No references found for {symbol_name!r}. (Reference graph is Python-only.)')
     else:
         if 'callers' in result:
-            console.print(f'\n[bold]Callers of {symbol_name}[/bold] ({len(callers)})')
+            candidates = sum(c['via'] == 'candidate' for c in callers)
+            counted = f'{len(callers) - candidates} resolved, {candidates} candidates' if candidates else str(len(callers))
+            console.print(f'\n[bold]Callers of {escape(symbol_name)}[/bold] ({counted})')
             if not callers:
                 console.print('  (none)')
             for c in callers:
-                console.print(f'  [dim]{c["via"]:<9}[/dim] [cyan]{escape(c["source_symbol"] or "?")}[/cyan] — {c["source_file"]}')
+                console.print(f'  [magenta]{c["via"]:<9}[/magenta] [cyan]{escape(c["source_symbol"] or "?")}[/cyan] — {c["source_file"]}')
 
         if 'callees' in result:
-            console.print(f'\n[bold]Callees of {symbol_name}[/bold] ({len(callees)})')
+            console.print(f'\n[bold]Callees of {escape(symbol_name)}[/bold] ({len(callees)})')
             if not callees:
                 console.print('  (none)')
             for c in callees:

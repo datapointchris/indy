@@ -66,6 +66,7 @@ from indy.storage import index_size_bytes as index_size_bytes
 from indy.storage import insert_chunk
 from indy.storage import insert_chunk_embedding
 from indy.storage import insert_references
+from indy.storage import is_indexed_class
 from indy.storage import open_working_db
 from indy.storage import search_chunks
 from indy.storage import set_extractor_version
@@ -670,14 +671,38 @@ def is_test_path(path: str) -> bool:
     return bool({'tests', 'test'} & set(parts)) or name.startswith('test_') or name.endswith('_test.py') or name == 'conftest.py'
 
 
-def find_callers(conn: sqlite3.Connection, symbol_name: str, repo: str | None = None) -> list[dict]:
-    """Callers of a bare name, or of `Owner.member` by the qualified rules, with tests last.
+def split_symbol(symbol_name: str) -> tuple[str, str, str]:
+    """`Owner.member[...]` as owner, member and subscript, any of which may be empty.
 
-    The sort is stable, so within each half the rows keep the order the rules matched them in.
+    The subscript is what a dispatch-table caller prints as, `STEPS['wslconfig']`, so a name
+    pasted back from deps output resolves.
     """
-    owner, _, member = symbol_name.rpartition('.')
-    rows = get_member_callers(conn, owner, member, repo=repo) if owner else get_symbol_callers(conn, symbol_name, repo=repo)
-    return sorted(rows, key=lambda row: is_test_path(row['source_file']))
+    base, bracket, rest = symbol_name.partition('[')
+    owner, _, member = base.rpartition('.')
+    return owner, member, bracket + rest
+
+
+def find_callers(conn: sqlite3.Connection, symbol_name: str, repo: str | None = None) -> list[dict]:
+    """Callers of a bare name, or of `Owner.member` by the qualified rules, with candidates and then tests last.
+
+    The sort is stable, so within each group the rows keep the order the rules matched them in.
+    """
+    owner, member, _ = split_symbol(symbol_name)
+    rows = get_member_callers(conn, owner, member, repo=repo) if owner else get_symbol_callers(conn, member, repo=repo)
+    return sorted(rows, key=lambda row: (row['via'] == 'candidate', is_test_path(row['source_file'])))
+
+
+def find_callees(conn: sqlite3.Connection, symbol_name: str, repo: str | None = None) -> list[dict]:
+    """Calls made inside a symbol. `module.function` is matched as `function` in files named `module`.
+
+    A method's source symbol is `Class.method` already, so an owner that is an indexed class is
+    matched whole.
+    """
+    owner, member, subscript = split_symbol(symbol_name)
+    stem = owner.rpartition('.')[2]
+    if stem and not is_indexed_class(conn, stem):
+        return get_symbol_callees(conn, member + subscript, repo=repo, file_stem=stem)
+    return get_symbol_callees(conn, symbol_name, repo=repo)
 
 
 def get_dependencies(symbol_name: str, repo: str | None = None, direction: str = 'both') -> dict:
@@ -693,7 +718,7 @@ def get_dependencies(symbol_name: str, repo: str | None = None, direction: str =
         if direction in ('callers', 'both'):
             result['callers'] = expand_result_paths(find_callers(conn, symbol_name, repo=repo), key='source_file')
         if direction in ('callees', 'both'):
-            result['callees'] = expand_result_paths(get_symbol_callees(conn, symbol_name, repo=repo), key='source_file')
+            result['callees'] = expand_result_paths(find_callees(conn, symbol_name, repo=repo), key='source_file')
         return result
     finally:
         conn.close()
