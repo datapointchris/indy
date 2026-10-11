@@ -561,8 +561,8 @@ def deps(
     receiver, listed after every resolved caller.
 
     In a repo the last full index ran scip-python over, callers come from its type checker.
-    Two more labels appear there: inferred (only a type checker reaches it, as through a
-    local assigned from a call), and override (a call to a method this one overrides).
+    Two more labels appear there: inferred (a call on a receiver only a type checker types,
+    as a local assigned from a call), and override (a call to a method this one overrides).
     """
     if direction not in ('callers', 'callees', 'both'):
         console.print("[red]--direction must be 'callers', 'callees', or 'both'.[/red]")

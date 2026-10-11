@@ -543,7 +543,9 @@ class ReferenceExtractor(ast.NodeVisitor):
 
     `scopes` holds the stretch of source each source_symbol names, outermost first, so a
     position found by another tool takes the same caller name. `non_value_spans` holds the
-    annotations, class bases and import statements, where a name is not used as a value.
+    annotations, class bases, import statements and `global` declarations, where a name is not
+    used as a value. `annotation_calls` holds each call inside an annotation, whose arguments
+    are values again. `stores` holds where each name or attribute assigned or deleted starts.
     """
 
     def __init__(self, file_path: str) -> None:
@@ -551,6 +553,8 @@ class ReferenceExtractor(ast.NodeVisitor):
         self.refs: list[Reference] = []
         self.scopes: list[Span] = []
         self.non_value_spans: list[Span] = []
+        self.annotation_calls: list[Span] = []
+        self.stores: set[tuple[int, int]] = set()
         self._context: list[str] = []  # class/function names, or a module-level target and its dict keys
         self._local_names: list[set[str]] = [set()]
         self._parameter_classes: list[dict[str, str]] = [{}]
@@ -644,6 +648,7 @@ class ReferenceExtractor(ast.NodeVisitor):
     def _visit_calls_in(self, annotation: ast.AST | None) -> None:
         """A type name in an annotation is no value, but a call inside one runs: `Annotated[str, Option()]`."""
         if isinstance(annotation, ast.Call):
+            self.annotation_calls.append(node_span(annotation, annotation))
             self.visit(annotation)
         elif annotation is not None:
             for child in ast.iter_child_nodes(annotation):
@@ -688,8 +693,13 @@ class ReferenceExtractor(ast.NodeVisitor):
         for child in [*node.args, *(keyword.value for keyword in node.keywords)]:
             self.visit(child)
 
+    def visit_Global(self, node: ast.Global) -> None:
+        self._mark_non_values([node])
+
     def visit_Name(self, node: ast.Name) -> None:
-        if isinstance(node.ctx, ast.Load) and node.id not in self._local_names[-1] and node.id not in BUILTIN_NAMES:
+        if not isinstance(node.ctx, ast.Load):
+            self.stores.add((node.lineno, node.col_offset))
+        elif node.id not in self._local_names[-1] and node.id not in BUILTIN_NAMES:
             self._record(node.id, None, 'reference')
 
     def visit_Attribute(self, node: ast.Attribute) -> None:
@@ -699,6 +709,8 @@ class ReferenceExtractor(ast.NodeVisitor):
         `provider.label` by the class `provider` is annotated with. That reaches a property and
         a bound method passed as a callback. Any other local is skipped as data.
         """
+        if not isinstance(node.ctx, ast.Load) and node.end_lineno is not None and node.end_col_offset is not None:
+            self.stores.add((node.end_lineno, node.end_col_offset - len(node.attr.encode())))
         if not isinstance(node.value, ast.Name):
             self.visit(node.value)
             return
@@ -725,12 +737,36 @@ def extract_references(file_path: str, content: str) -> list[Reference]:
     return extractor.refs
 
 
-def extract_spans(file_path: str, content: str) -> tuple[list[Span], list[Span]]:
-    """A Python file's scopes and non-value spans, as ReferenceExtractor finds them. Both empty for a file that fails to parse."""
+@dataclass(frozen=True)
+class SourceSpans:
+    """Where ReferenceExtractor found each caller and each value in one Python file."""
+
+    scopes: list[Span]
+    non_values: list[Span]
+    annotation_calls: list[Span]
+    stores: set[tuple[int, int]]
+
+    def caller_at(self, position: tuple[int, int]) -> str | None:
+        """The source_symbol the extractor gives code at position: its innermost scope, or None at module level."""
+        return next((scope.symbol for scope in reversed(self.scopes) if scope.holds(position)), None)
+
+    def is_value(self, position: tuple[int, int]) -> bool:
+        """Whether a name at position is read as a value.
+
+        It is not where it is assigned or deleted, or inside an annotation, base, import or
+        `global`, unless it sits inside a call in an annotation.
+        """
+        if position in self.stores:
+            return False
+        return not any(span.holds(position) for span in self.non_values) or any(span.holds(position) for span in self.annotation_calls)
+
+
+def extract_spans(file_path: str, content: str) -> SourceSpans:
+    """A Python file's spans, as ReferenceExtractor finds them. All empty for a file that fails to parse."""
     try:
         tree = ast.parse(content)
     except (SyntaxError, ValueError):
-        return [], []
+        return SourceSpans([], [], [], set())
     extractor = ReferenceExtractor(file_path)
     extractor.visit(tree)
-    return extractor.scopes, extractor.non_value_spans
+    return SourceSpans(extractor.scopes, extractor.non_value_spans, extractor.annotation_calls, extractor.stores)

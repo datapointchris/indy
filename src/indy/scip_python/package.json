@@ -1,0 +1,8 @@
+{
+  "name": "indy-scip-python",
+  "private": true,
+  "description": "The scip-python indy runs, pinned with its whole dependency tree by package-lock.json",
+  "dependencies": {
+    "@sourcegraph/scip-python": "0.6.6"
+  }
+}

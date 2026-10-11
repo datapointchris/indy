@@ -52,12 +52,14 @@ from indy.repos import get_exemplar_repo_names
 from indy.repos import get_owned_repo_names
 from indy.repos import get_target_by_name
 from indy.repos import is_excluded
-from indy.scip import SCIP_PYTHON
+from indy.scip import SCIP_LINK_VERSION
 from indy.scip import ScipError
 from indy.scip import describe_environment
 from indy.scip import environment_digest
 from indy.scip import link_documents
+from indy.scip import lockfile_digest
 from indy.scip import name_symbol
+from indy.scip import node_installed
 from indy.scip import run_scip_python
 from indy.scip import venv_python
 from indy.storage import IndexNotFoundError
@@ -260,17 +262,28 @@ class IndexSession:
         return index_into(self._conn, root, repo_name, on_progress=on_progress, exclude=exclude)
 
     def index_target(self, target: IndexTarget, on_progress: ProgressCallback | None = None) -> dict:
-        """Index one target. An owned repo's Python is then resolved by scip-python, against the files this run just read."""
-        result = self.index_path(target.path, target.name, on_progress=on_progress, exclude=target.exclude)
+        """Index one target. An owned repo's Python is then resolved by scip-python, against the files this run just read.
+
+        An interrupt anywhere in an owned repo drops its SCIP rows before the session swaps the
+        working copy in. They describe the files as they were before this run, and the run may
+        already have replaced some of those.
+        """
         if target.kind != OWNED:
-            return result
+            return self.index_path(target.path, target.name, on_progress=on_progress, exclude=target.exclude)
+        try:
+            result = self.index_path(target.path, target.name, on_progress=on_progress, exclude=target.exclude)
 
-        def announce() -> None:
-            if on_progress:
-                scanned, updated = result['files_scanned'], result['files_updated']
-                on_progress(IndexProgress(scanned=scanned, updated=updated, to_update=updated, total=scanned, current_file='scip-python'))
+            def announce() -> None:
+                if on_progress:
+                    scanned, updated = result['files_scanned'], result['files_updated']
+                    on_progress(
+                        IndexProgress(scanned=scanned, updated=updated, to_update=updated, total=scanned, current_file='scip-python')
+                    )
 
-        result['scip'] = resolve_python_symbols(self._conn, target.path, target.name, on_start=announce)
+            result['scip'] = resolve_python_symbols(self._conn, target.path, target.name, on_start=announce)
+        except KeyboardInterrupt:
+            replace_scip_index(self._conn, scip_state(target.name, 'skipped', INTERRUPTED_REASON))
+            raise
         return result
 
     def clear_errors(self) -> int:
@@ -570,17 +583,29 @@ def index_all(
 
 # ── scip-python ───────────────────────────────────────────────────────────────
 
-# Raise whenever link_documents changes the rows it writes. The fingerprint carries it, so the
-# next index runs scip-python again over every repo, however unchanged its files are.
-SCIP_LINK_VERSION = 1
-
 NO_VENV_REASON = 'no .venv, and scip-python needs the project installed in one to name its modules'
+NO_NODE_REASON = 'Node.js is not installed, and scip-python runs on it: no node, npm or npx on PATH'
+INTERRUPTED_REASON = 'the index was interrupted before scip-python finished'
 
 
 def scip_fingerprint(files: list[tuple[str, str]], environment: str) -> str:
-    """What a scip-python run over a repo depends on: its Python files, its packages, and the code reading the result."""
-    inputs = [SCIP_PYTHON, SCIP_LINK_VERSION, EXTRACTOR_VERSION, environment_digest(environment), files]
+    """What a scip-python run over a repo depends on: its Python files, its packages, scip-python's own, and the code reading the result."""
+    inputs = [lockfile_digest(), SCIP_LINK_VERSION, EXTRACTOR_VERSION, environment_digest(environment), files]
     return hashlib.sha256(json.dumps(inputs).encode()).hexdigest()
+
+
+def scip_state(repo_name: str, status: str, reason: str | None = None) -> dict:
+    """A scip_index record with no rows behind it."""
+    return {
+        'repo': repo_name,
+        'indexed_at': dt.datetime.now(dt.UTC).isoformat(),
+        'status': status,
+        'reason': reason,
+        'fingerprint': None,
+        'document_count': 0,
+        'reference_count': 0,
+        'seconds': None,
+    }
 
 
 def resolve_python_symbols(
@@ -598,16 +623,7 @@ def resolve_python_symbols(
     A Python file indy does not index is outside that check, as it is outside the links.
     """
     started = time.perf_counter()
-    state: dict = {
-        'repo': repo_name,
-        'indexed_at': dt.datetime.now(dt.UTC).isoformat(),
-        'status': 'skipped',
-        'reason': None,
-        'fingerprint': None,
-        'document_count': 0,
-        'reference_count': 0,
-        'seconds': None,
-    }
+    state = scip_state(repo_name, 'skipped')
     try:
         files = get_python_file_hashes(conn, repo_name)
         python = venv_python(root)
@@ -615,6 +631,8 @@ def resolve_python_symbols(
             state['reason'] = 'no Python files'
         elif python is None:
             state['reason'] = NO_VENV_REASON
+        elif not node_installed():
+            state['reason'] = NO_NODE_REASON
         else:
             environment = describe_environment(python)
             fingerprint = scip_fingerprint(files, environment)
@@ -1375,14 +1393,29 @@ def symbol_owner(symbol: str) -> str | None:
     return named.name.rpartition('.')[0] or named.module.rpartition('.')[2] or None
 
 
+def scip_caller_label(use: dict, overridden: set[str], rules: dict[tuple[str, str | None], str]) -> str:
+    """How a caller scip-python found reaches the target.
+
+    `override` where it calls a method the target overrides. Otherwise the label of the
+    syntactic rule reaching the same caller, if one does. Otherwise `inferred` for a name read
+    off a receiver no rule types, and `call` or `reference` for a bare name, which reaches its
+    symbol by import or scope rather than by any type.
+    """
+    if use['symbol'] in overridden:
+        return 'override'
+    rule = rules.get((use['file_path'], use['source_symbol']))
+    if rule:
+        return rule
+    return 'inferred' if use['on_receiver'] else use['ref_type']
+
+
 def find_callers(conn: sqlite3.Connection, symbol_name: str, repo: str | None = None) -> tuple[list[dict], list[str]]:
     """Callers of a bare name or of `Owner.member`, with candidates and then tests last, and the repos scip-python resolved them in.
 
-    Where scip-python defines the symbol, the repos it ran over take their callers from it.
-    A caller the syntactic rules also reach keeps their label. One only a type checker
-    reaches is `inferred`, and a call to a method this one overrides is `override`. A
-    syntactic candidate there stands only where scip-python resolved nothing of that name in
-    the same caller. Every other file, including any the overlay holds, keeps the syntactic rules.
+    Where scip-python defines the symbol, the repos it ran over take their callers from it,
+    labeled by scip_caller_label. A syntactic candidate there stands only where scip-python
+    resolved nothing of that name in the same caller. Every other file, including any the
+    overlay holds, keeps the syntactic rules.
 
     The sort is stable, so within each group the rows keep the order they were found in.
     """
@@ -1407,7 +1440,7 @@ def find_callers(conn: sqlite3.Connection, symbol_name: str, repo: str | None = 
                 'target_module': symbol_owner(use['symbol']),
                 'ref_type': use['ref_type'],
                 'line': use['line'],
-                'via': 'override' if use['symbol'] in overridden else rules.get((use['file_path'], use['source_symbol']), 'inferred'),
+                'via': scip_caller_label(use, overridden, rules),
             }
             for use in get_scip_references(conn, symbols | overridden, repo)
         ]

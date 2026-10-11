@@ -9,7 +9,7 @@ Local-first: sqlite-vec for vector storage, ollama for embeddings. No external A
 - Python 3.13+
 - [ollama](https://ollama.com) running locally with an embedding model:
   `ollama serve` and `ollama pull nomic-embed-text`
-- Optionally, Node.js with `npx`, for exact Python references (below)
+- Optionally, Node.js with `npm` and `npx`, for exact Python references (below)
 
 ## Usage
 
@@ -67,17 +67,20 @@ overlay aside and says so, rather than letting older saves hide the newer index.
 ## Exact Python references
 
 `indy index` runs [scip-python](https://github.com/sourcegraph/scip-python), Pyright's
-indexer, over each Python repo in your own registry, pinned at 0.6.6 and run through `npx`.
-Where it ran, `deps` takes that repo's callers from the type checker. That reaches a call on
-a local whose type is only inferred, labeled `inferred`, and a call to a method an override
-replaces, labeled `override`. A call by method name that resolves to some other class no
-longer shows as a candidate.
+indexer, over each Python repo in your own registry. The lockfile in `src/indy/scip_python/`
+pins it and everything it depends on, and `npm ci` installs that once under
+`$XDG_CACHE_HOME/indy/scip-python/`. Where it ran, `deps` takes that repo's callers from the
+type checker. That reaches a call on a local whose type is only inferred, labeled `inferred`,
+and a call to a method an override replaces, labeled `override`. A call by method name that
+scip-python resolves to another class is not listed.
 
 It runs from the repo's `.venv`, with the project installed there. A repo without one is
-skipped, since scip-python cannot name the project's modules without it. A repo whose run
-fails keeps none of its earlier results, and `deps` answers for it by the syntactic rules.
-`indy index` prints what happened per repo and `indy status` lists every repo it skipped,
-with the reason. A repo is run again only once a Python file or an installed package changes.
+skipped, since scip-python cannot name the project's modules without it. Without Node.js,
+every repo is skipped. A repo whose run fails, or whose index was stopped before the run
+finished, keeps none of its earlier results, and `deps` answers for it by the syntactic
+rules. `indy index` prints what happened per repo and `indy status` lists every repo it
+skipped, with the reason. A repo is run again only once a Python file or an installed
+package changes.
 
 `indy watch` never runs it, because a run takes about twenty seconds for a large repo. A
 file saved since the last index answers from the syntactic rules until the next one.

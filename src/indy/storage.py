@@ -227,7 +227,8 @@ SCIP_SCHEMA = """
         symbol        TEXT NOT NULL,
         member        TEXT NOT NULL,
         source_symbol TEXT,
-        ref_type      TEXT NOT NULL
+        ref_type      TEXT NOT NULL,
+        on_receiver   INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_scip_occurrence_symbol ON scip_occurrence(symbol);
     CREATE INDEX IF NOT EXISTS idx_scip_occurrence_member ON scip_occurrence(member);
