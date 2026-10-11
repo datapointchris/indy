@@ -99,6 +99,15 @@ def status(
             updated = f'updated {run["files_updated"]}, +{run["chunks_added"]} chunks' if run['files_updated'] else 'no changes'
             console.print(f'  {run["repo"]:<25s} scanned {run["files_scanned"]}, {updated}')
 
+    scip = [state for state in stats.get('scip', []) if state['reason'] != 'no Python files']
+    if scip:
+        resolved = sum(state['status'] == 'ok' for state in scip)
+        console.print()
+        console.print(f'[bold]scip-python:[/bold] {resolved} of {len(scip)} Python repos resolved')
+        for state in scip:
+            if state['status'] != 'ok':
+                console.print(f'  {state["repo"]:<25s} {describe_scip(state)}')
+
     error_count = stats.get('error_files', 0)
     if error_count:
         console.print()
@@ -205,7 +214,7 @@ def index(
             )
             for target in targets:
                 task_id = progress.add_task(target.name, total=None, counts='', current_file='')
-                result = session.index_path(target.path, target.name, on_progress=make_progress_callback(task_id), exclude=target.exclude)
+                result = session.index_target(target, on_progress=make_progress_callback(task_id))
                 results.append(result)
                 # Draw the target's closing tick before dropping its line, or it ends on the
                 # count from before its last file and reads as one short of what it did.
@@ -367,6 +376,21 @@ def print_index_result(result: dict) -> None:
         f'{pruned}'
         f'+{result["chunks_added"]} chunks — {status_str}'
     )
+    scip = result.get('scip')
+    if scip and scip['reason'] != 'no Python files':
+        console.print(f'    {describe_scip(scip)}')
+
+
+def describe_scip(state: dict) -> str:
+    """One line on what scip-python did for a repo. A repo with no Python says nothing, since there was nothing to resolve."""
+    if state['status'] == 'ok':
+        if state.get('unchanged'):
+            return '[dim]scip-python: unchanged since the last run[/dim]'
+        return (
+            f'[dim]scip-python: {state["reference_count"]} references across {state["document_count"]} files in {state["seconds"]}s[/dim]'
+        )
+    color = 'yellow' if state['status'] == 'skipped' else 'red'
+    return f'[{color}]scip-python {state["status"]}: {escape(state["reason"] or "")}[/{color}]'
 
 
 @indy_app.command('errors')
@@ -535,6 +559,10 @@ def deps(
     parameter annotated with a base class or a subclass of the owner), module (a bare name in
     the owner's own file), or candidate. A candidate is a call by method name on an untyped
     receiver, listed after every resolved caller.
+
+    In a repo the last full index ran scip-python over, callers come from its type checker.
+    Two more labels appear there: inferred (a call on a receiver only a type checker types,
+    as a local assigned from a call), and override (a call to a method this one overrides).
     """
     if direction not in ('callers', 'callees', 'both'):
         console.print("[red]--direction must be 'callers', 'callees', or 'both'.[/red]")
@@ -554,11 +582,14 @@ def deps(
             candidates = sum(c['via'] == 'candidate' for c in callers)
             counted = f'{len(callers) - candidates} resolved, {candidates} candidates' if candidates else str(len(callers))
             console.print(f'\n[bold]Callers of {escape(symbol_name)}[/bold] ({counted})')
+            if result['resolved_by_scip']:
+                console.print(f'[dim]  Resolved by scip-python in {", ".join(result["resolved_by_scip"])}.[/dim]')
             if not callers:
                 console.print('  (none)')
             for c in callers:
                 caller = f'[cyan]{escape(c["source_symbol"] or "?")}[/cyan]'
-                console.print(f'  [magenta]{c["via"]:<9}[/magenta] {caller} — {c["source_file"]}{format_branch(c)}')
+                at = f':{c["line"]}' if c.get('line') else ''
+                console.print(f'  [magenta]{c["via"]:<9}[/magenta] {caller} — {c["source_file"]}{at}{format_branch(c)}')
 
         if 'callees' in result:
             console.print(f'\n[bold]Callees of {escape(symbol_name)}[/bold] ({len(callees)})')

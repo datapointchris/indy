@@ -152,6 +152,10 @@ WORKING_DB_PATH = INDY_DIR / 'indy.db.building'
 # overlay is written in place, which a replicated file must never be. See storage.attach_overlay().
 OVERLAY_DIR = CACHE_HOME / 'indy' / 'overlays'
 
+# Where scip-python is installed from the lockfile in src/indy/scip_python/, one directory per
+# lockfile. Cache: losing it costs one `npm ci`.
+SCIP_PYTHON_DIR = CACHE_HOME / 'indy' / 'scip-python'
+
 # Registry locations default to indy-owned paths. Sharing one registry with other tools
 # is an arrangement between those tools, so it belongs in config.toml on the machines
 # that have such a file — never in the default, which every machine inherits.

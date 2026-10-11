@@ -9,6 +9,7 @@ Local-first: sqlite-vec for vector storage, ollama for embeddings. No external A
 - Python 3.13+
 - [ollama](https://ollama.com) running locally with an embedding model:
   `ollama serve` and `ollama pull nomic-embed-text`
+- Optionally, Node.js with `npm` and `npx`, for exact Python references (below)
 
 ## Usage
 
@@ -24,7 +25,7 @@ indy search "query" --reference # only third-party exemplar clones
 indy search "query" --json      # machine-readable JSON output
 indy symbol get_db              # exact symbol lookup by function/class name
 indy deps get_db                # reference graph: callers + callees of a symbol
-indy deps Store.save -d callers # Owner.member: self calls, typed params, module hints
+indy deps Store.save -d callers # Owner.member: exact where scip-python ran, else self calls, typed params, module hints
 indy config show                # resolved settings and which layer supplied each
 indy status                     # index health: file counts, last run
 indy errors                     # per-file error listing grouped by repo
@@ -62,6 +63,27 @@ directory, so a setup that syncs the index never carries it. `indy config show` 
 path. The overlay is compacted against the index whenever a new one is built or arrives,
 and every file the index now holds drops out of it. Until that happens, a read sets the
 overlay aside and says so, rather than letting older saves hide the newer index.
+
+## Exact Python references
+
+`indy index` runs [scip-python](https://github.com/sourcegraph/scip-python), Pyright's
+indexer, over each Python repo in your own registry. The lockfile in `src/indy/scip_python/`
+pins it and everything it depends on, and `npm ci` installs that once under
+`$XDG_CACHE_HOME/indy/scip-python/`. Where it ran, `deps` takes that repo's callers from the
+type checker. That reaches a call on a local whose type is only inferred, labeled `inferred`,
+and a call to a method an override replaces, labeled `override`. A call by method name that
+scip-python resolves to another class is not listed.
+
+It runs from the repo's `.venv`, with the project installed there. A repo without one is
+skipped, since scip-python cannot name the project's modules without it. Without Node.js,
+every repo is skipped. A repo whose run fails, or whose index was stopped before the run
+finished, keeps none of its earlier results, and `deps` answers for it by the syntactic
+rules. `indy index` prints what happened per repo and `indy status` lists every repo it
+skipped, with the reason. A repo is run again only once a Python file or an installed
+package changes.
+
+`indy watch` never runs it, because a run takes about twenty seconds for a large repo. A
+file saved since the last index answers from the syntactic rules until the next one.
 
 ## Configuration
 
@@ -144,9 +166,10 @@ paths fall back to a directory walk.
 ## Architecture
 
 ```yaml
-storage.py     SQLite manifest (indexed_file, index_run, symbol_reference) + sqlite-vec vectors,
-               and the overlay a read sees on top of them
+storage.py     SQLite manifest (indexed_file, index_run, symbol_reference, scip_*) + sqlite-vec
+               vectors, and the overlay a read sees on top of them
 service.py     All logic: index_path, search, search_symbol, refresh, get_dependencies, watch
+scip.py        Runs scip-python, decodes its protobuf index, and names each reference's caller
 watch.py       Filesystem events for `indy watch`: debounced batches and a newest-first queue
 chunker.py     Python AST chunking + tree-sitter (Go/TS/Rust/Lua) + prose/code splitters
                + Python reference extraction (call graph)
