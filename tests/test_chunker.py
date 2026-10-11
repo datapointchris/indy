@@ -78,16 +78,19 @@ def test_empty_config_produces_nothing():
 
 
 def test_a_name_used_as_a_value_is_a_reference_row():
-    """A function placed in a dispatch table is never called by name, so a value is its only trace."""
+    """A function placed in a dispatch table is never called by name, so a value is its only trace.
+
+    An annotation's type names are not values, and the call inside one still runs.
+    """
     content = (
-        'def wire(param):\n'
+        'def wire(param: Annotated[Kind, option()]):\n'
         '    local = make()\n'
         '    register(handler, name=local)\n'
         '    on_event = lambda event: event\n'
         '    return [handler, param, local, len, on_event]\n'
     )
     refs = [(ref.target_symbol, ref.ref_type) for ref in extract_references('m.py', content)]
-    assert sorted(refs) == [('handler', 'reference'), ('handler', 'reference'), ('make', 'call'), ('register', 'call')]
+    assert sorted(refs) == [('handler', 'reference'), ('handler', 'reference'), ('make', 'call'), ('option', 'call'), ('register', 'call')]
 
 
 def test_module_level_code_is_attributed_to_its_assignment_target():

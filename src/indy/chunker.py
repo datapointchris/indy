@@ -579,6 +579,8 @@ class ReferenceExtractor(ast.NodeVisitor):
         self._local_names.append(bound | self._local_names[-1])
         self._parameter_classes.append({arg.arg: cls for arg in parameters if (cls := annotated_class(arg.annotation))})
         self._context.append(node.name)
+        for annotation in [*(arg.annotation for arg in parameters), node.returns]:
+            self._visit_calls_in(annotation)
         defaults = [*node.args.defaults, *(default for default in node.args.kw_defaults if default is not None)]
         for child in [*node.decorator_list, *defaults, *node.body]:
             self.visit(child)
@@ -600,8 +602,17 @@ class ReferenceExtractor(ast.NodeVisitor):
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         self.visit(node.target)
+        self._visit_calls_in(node.annotation)
         if node.value is not None:
             self._visit_assigned(node.target, node.value)
+
+    def _visit_calls_in(self, annotation: ast.AST | None) -> None:
+        """A type name in an annotation is no value, but a call inside one runs: `Annotated[str, Option()]`."""
+        if isinstance(annotation, ast.Call):
+            self.visit(annotation)
+        elif annotation is not None:
+            for child in ast.iter_child_nodes(annotation):
+                self._visit_calls_in(child)
 
     def _visit_assigned(self, target: ast.expr, value: ast.expr) -> None:
         """At module level the target names the code on the right: `STEPS`, or `STEPS['key']` inside a dict."""
