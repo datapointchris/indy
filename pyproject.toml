@@ -1,6 +1,6 @@
 [project]
 name = "indy"
-version = "2.1.0"
+dynamic = ["version"]
 description = "Semantic search index for local codebases, docs, and notes"
 authors = [{ name = "Chris Birch", email = "datapointchris@gmail.com" }]
 license = "MIT"
@@ -168,23 +168,19 @@ managed = [
 # and extra that names them, so a local run and CI cannot disagree.
 pinned = ["ruff"]
 
+# The release tag is the version. python-semantic-release finds no file to
+# stamp, so it tags the merge commit itself and writes no release commit.
+# uv_build cannot do this: its metadata has no dynamic version field.
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+style = "semver"
+
+# A new commit or tag changes the version, so it has to invalidate uv's cache.
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
+
 [build-system]
-requires = ["uv_build>=0.12.2,<0.13.0"]
-build-backend = "uv_build"
-
-[tool.uv.build-backend]
-module-name = "indy"
-module-root = "src"
-
-[tool.semantic_release]
-version_toml = ["pyproject.toml:project.version"]
-commit_message = "build(release): {version}"
-# The package name is hardcoded on purpose. python-semantic-release sets no
-# $PACKAGE_NAME, so `uv lock --upgrade-package "$PACKAGE_NAME"` silently no-ops
-# and ships a stale lock file in the release commit.
-# Reads the uv-lock hook's rev, the one uv release every uv.lock writer runs.
-build_command = '''
-    pip install "uv==$(python -c 'import re; print(re.search(r"uv-pre-commit\s+rev: \"?([\w.]+)", open(".pre-commit-config.yaml").read())[1])')"
-    uv lock --upgrade-package indy
-    git add uv.lock
-'''
+requires = ["hatchling", "uv-dynamic-versioning"]
+build-backend = "hatchling.build"
