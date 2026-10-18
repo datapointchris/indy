@@ -140,7 +140,7 @@ def index(
     complete either.
     """
     if repo and path:
-        console.print('[red]Cannot specify both repo name and --path.[/red]')
+        err_console.print('[red]Cannot specify both repo name and --path.[/red]')
         raise typer.Exit(1)
 
     t0 = time.perf_counter()
@@ -183,18 +183,18 @@ def index(
     if path:
         root = Path(path).expanduser().resolve()
         if not root.exists():
-            console.print(f'[red]Path not found: {root}[/red]')
+            err_console.print(f'[red]Path not found: {root}[/red]')
             raise typer.Exit(1)
         targets = [IndexTarget(name=root.name, path=root, kind='path')]
     elif repo:
         target = get_target_by_name(repo)
         if target is None:
-            console.print(f'[red]No repo named {repo!r}.[/red]')
+            err_console.print(f'[red]No repo named {repo!r}.[/red]')
             advice = advise_on_a_path(repo)
             if advice:
-                console.print(f'  {advice}')
+                err_console.print(f'  {advice}')
             for suggestion in suggest_target_names(repo):
-                console.print(f'  did you mean [bold]{suggestion}[/bold]?')
+                err_console.print(f'  did you mean [bold]{suggestion}[/bold]?')
             raise typer.Exit(2)
         targets = [target]
     else:
@@ -499,7 +499,7 @@ def search(
 ):
     """Semantic search across indexed code and notes."""
     if owned and reference:
-        console.print('[red]Cannot use --owned and --reference together.[/red]')
+        err_console.print('[red]Cannot use --owned and --reference together.[/red]')
         raise typer.Exit(1)
     ownership = True if owned else (False if reference else None)
     results = service.search(query, repo=repo, language=language, limit=limit, owned=ownership)
@@ -570,7 +570,7 @@ def deps(
     as a local assigned from a call), and override (a call to a method this one overrides).
     """
     if direction not in ('callers', 'callees', 'both'):
-        console.print("[red]--direction must be 'callers', 'callees', or 'both'.[/red]")
+        err_console.print("[red]--direction must be 'callers', 'callees', or 'both'.[/red]")
         raise typer.Exit(1)
 
     result = service.get_dependencies(symbol_name, repo=repo, direction=direction)
@@ -616,9 +616,9 @@ def stats(
         history = service.repo_scan_history(repo)
         if not history:
             if get_target_by_name(repo) is None:
-                console.print(f'[red]Repo {repo!r} not found. Exemplar clones are named owner/repo.[/red]')
+                err_console.print(f'[red]Repo {repo!r} not found. Exemplar clones are named owner/repo.[/red]')
             else:
-                console.print(f'No scan history for {repo!r}. Run [bold]indy index {repo}[/bold] first.')
+                err_console.print(f'No scan history for {repo!r}. Run [bold]indy index {repo}[/bold] first.')
             raise typer.Exit(1)
 
         labels = [h['started_at'][5:10] for h in history]
@@ -768,7 +768,7 @@ def main() -> None:
     try:
         indy_app()
     except IndexNotFoundError as exc:
-        console.print(f'[red]{exc}[/red]')
+        err_console.print(f'[red]{escape(str(exc))}[/red]', soft_wrap=True)
         sys.exit(1)
 
 
