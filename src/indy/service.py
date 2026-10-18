@@ -314,7 +314,8 @@ def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[Ind
 
     Once the new index is in place, the overlay drops every file it now matches. Under the
     labels this session indexed that includes a file read at the same or a later mtime, since
-    this machine just read those files itself.
+    this machine just read those files itself. An overlay `indy watch` keeps busy is left to
+    the watcher, and on_stage hears 'overlay busy'.
     """
     if on_stage:
         on_stage('snapshot')
@@ -324,7 +325,7 @@ def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[Ind
         yield session
     except KeyboardInterrupt:
         commit_working_db(conn)
-        compact_live_overlay(session.indexed_labels)
+        compact_live_overlay(session.indexed_labels, on_stage)
         raise
     except BaseException:
         discard_working_db(conn)
@@ -332,7 +333,7 @@ def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[Ind
     if on_stage:
         on_stage('save')
     commit_working_db(conn)
-    compact_live_overlay(session.indexed_labels)
+    compact_live_overlay(session.indexed_labels, on_stage)
 
 
 def prune_missing_files(conn: sqlite3.Connection, repo_name: str, root: Path) -> int:
@@ -972,15 +973,29 @@ def stale_live_paths(root: LiveRoot) -> list[Path]:
     return stale + gone + revived
 
 
-def compact_live_overlay(read_here: Collection[str] = ()) -> dict | None:
-    """Drop what the overlay holds that the base now matches. None where the index has no overlay.
+def compact_live_overlay(read_here: Collection[str] = (), on_stage: Callable[[str], None] | None = None) -> dict | None:
+    """Drop what the overlay holds that the base now matches. None where the index has no overlay or it is busy.
 
     read_here names the labels this machine just indexed, as storage.compact_overlay takes them.
+
+    A writer that holds the overlay past its busy timeout leaves it as it is, and on_stage
+    hears 'overlay busy'. The only other writer is `indy watch`, which compacts the overlay
+    against every base it has not reconciled with, so the new index is covered either way.
+    Until it does, reads set the overlay aside rather than lay it over a base it was never
+    compared with. What waits is the mtime rule for read_here, which the next full index
+    applies. Failing here instead would report an index already in place as a failed run.
     """
     if not overlay_path().exists():
         return None
-    with closing(open_overlay_db()) as conn:
-        return compact_overlay(conn, read_here)
+    try:
+        with closing(open_overlay_db()) as conn:
+            return compact_overlay(conn, read_here)
+    except sqlite3.OperationalError as exc:
+        if exc.sqlite_errorcode & 0xFF != sqlite3.SQLITE_BUSY:
+            raise
+    if on_stage:
+        on_stage('overlay busy')
+    return None
 
 
 def warm_model() -> None:
@@ -1044,9 +1059,10 @@ def watch(
                     continue
                 started = time.perf_counter()
                 try:
-                    change = update_overlay(conn, path, root)
+                    # A call that changed nothing still holds its DELETEs' write lock until this commits.
+                    with conn:
+                        change = update_overlay(conn, path, root)
                 except Exception as exc:
-                    conn.rollback()
                     tries = attempts.get(path, 0) + 1
                     delay = RETRY_FIRST_SECONDS * 2 ** (tries - 1)
                     if delay > RETRY_LAST_SECONDS:
