@@ -13,19 +13,21 @@ old as its last scan, and every lookup says how old that is.
 
 ## Install
 
-indy installs as a uv tool, from a tagged release. It needs Python 3.13 or later.
+indy installs as a uv tool, from the package index every release is published to. It needs Python
+3.13 or later.
 
 ```bash
-tag=$(git ls-remote --tags --refs --sort=-v:refname https://github.com/datapointchris/indy 'v*' | head -1 | cut -d/ -f3)
-uv tool install "git+https://github.com/datapointchris/indy@$tag"   # the newest release
-indy --version                                                      # the version, and the commit it was built from
-indy update --check                                                 # whether a newer release exists
+uv tool install --index https://pypi.ichrisbirch.com/simple/ indy   # the newest release
+indy --version                                                       # the version, and the commit it was built from
+indy update --check                                                  # whether a newer release exists
 ```
 
+Name the index on the install: without it uv asks PyPI, where `indy` is a different project. uv
+records the index beside the tool, which is where `indy update` reads it back.
+
 `indy update` reinstalls the newest release over the current one. It refuses an install from a
-local checkout or from a branch, because neither carries a release version to compare. Install from
-a tag to keep it updatable. Every other command checks for a newer release at most once a day, and
-says so in one line after its own output.
+local checkout or from a branch, because neither carries a release version to compare. Every other
+command checks for a newer release at most once a day, and says so in one line after its own output.
 
 ollama is installed separately, from [ollama.com](https://ollama.com). Exact Python callers need
 Node.js with `npm` and `npx`. Without them, indy runs and `deps` answers by syntax alone.
