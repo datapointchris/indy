@@ -79,15 +79,17 @@ def load_user_config(path: Path | None = None) -> dict[str, Any]:
     return parsed
 
 
-# Read at import, because every path below resolves from it. A fault is held rather than
-# raised. Raised here, it would escape while the CLI is still importing, before any handler
-# exists, and print as a traceback. main() reports it and refuses to run a command.
+# Settings are read at import, because every path below resolves from them. A fault is held
+# rather than raised. Raised here, it would escape while the CLI is still importing, before
+# any handler exists, and print as a traceback. main() reports the first one held and refuses
+# to run a command.
+CONFIG_FAULT: ConfigError | None = None
+
 try:
     USER_CONFIG = load_user_config()
-    USER_CONFIG_FAULT: ConfigError | None = None
 except ConfigError as fault:
     USER_CONFIG = {}
-    USER_CONFIG_FAULT = fault
+    CONFIG_FAULT = fault
 
 
 def resolve_path(
@@ -132,13 +134,27 @@ def resolve_extra_paths(config: dict[str, Any] | None = None) -> list[dict[str, 
     """Non-repo roots to index, as [[extra_paths]] tables of name and path.
 
     The env var carries the same shape as JSON, for a one-off run against a directory
-    that does not belong in the config file.
+    that does not belong in the config file. Either layer holding anything else raises
+    ConfigError naming the layer. Accepted, a malformed entry would fail later as a
+    traceback from whichever command first walked the targets.
     """
     config = USER_CONFIG if config is None else config
     raw = os.environ.get('INDY_EXTRA_PATHS')
     if raw:
-        return json.loads(raw)
-    return list(config.get('extra_paths', []))
+        layer = '$INDY_EXTRA_PATHS'
+        try:
+            entries = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f'{layer} is not valid JSON: {exc}') from exc
+    else:
+        layer = f'{CONFIG_PATH}: extra_paths'
+        entries = config.get('extra_paths', [])
+    well_formed = isinstance(entries, list) and all(
+        isinstance(entry, dict) and all(isinstance(entry.get(key), str) for key in ('name', 'path')) for entry in entries
+    )
+    if not well_formed:
+        raise ConfigError(f'{layer} must be a list of entries, each with a string name and path')
+    return list(entries)
 
 
 # The index is derived state — rebuildable from its sources, and per-machine unless
@@ -168,7 +184,11 @@ SCIP_PYTHON_DIR = CACHE_HOME / 'indy' / 'scip-python'
 REPOS_REGISTRY = resolve_path('INDY_REPOS_REGISTRY', 'repos_registry', CONFIG_DIR / 'repos.json')
 EXEMPLAR_REGISTRY = resolve_path('INDY_EXEMPLAR_REGISTRY', 'exemplar_registry', CONFIG_DIR / 'exemplar-repos.json')
 
-EXTRA_PATHS_RAW: list[dict[str, str]] = resolve_extra_paths()
+try:
+    EXTRA_PATHS_RAW: list[dict[str, str]] = resolve_extra_paths()
+except ConfigError as fault:
+    EXTRA_PATHS_RAW = []
+    CONFIG_FAULT = CONFIG_FAULT or fault
 
 OLLAMA_HOST = resolve_str('OLLAMA_HOST', 'ollama_host', 'http://localhost:11434')
 OLLAMA_MODEL = resolve_str('OLLAMA_MODEL', 'ollama_model', 'nomic-embed-text')
