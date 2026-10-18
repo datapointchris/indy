@@ -60,13 +60,13 @@ def test_an_unknown_label_never_reaches_the_index(monkeypatch):
 
 def test_a_directory_the_registry_covers_is_answered_with_its_name(tmp_path, monkeypatch):
     """`indy index ~/repo` names the problem; the fix is the label the registry gave it."""
-    monkeypatch.setattr(main, 'all_index_targets', lambda: [IndexTarget(name='dotfiles', path=tmp_path, kind='owned')])
+    monkeypatch.setattr(main, 'all_index_targets', lambda: [IndexTarget(name='websites', path=tmp_path, kind='owned')])
     monkeypatch.setattr(main, 'get_target_by_name', lambda name: None)
 
     result = runner.invoke(indy_app, ['index', str(tmp_path)])
 
     assert result.exit_code == 2
-    assert 'indy index dotfiles' in result.output
+    assert 'indy index websites' in result.output
 
 
 def test_a_directory_no_registry_covers_is_answered_with_the_flag(tmp_path, monkeypatch):
@@ -82,10 +82,10 @@ def test_a_directory_no_registry_covers_is_answered_with_the_flag(tmp_path, monk
 
 def test_a_name_that_is_not_a_directory_still_gets_the_near_misses(monkeypatch):
     """A typo is not a path, and the advice for one must not crowd out the other."""
-    monkeypatch.setattr(main, 'all_index_targets', lambda: [IndexTarget(name='dotfiles', path=Path('/nowhere'), kind='owned')])
+    monkeypatch.setattr(main, 'all_index_targets', lambda: [IndexTarget(name='websites', path=Path('/nowhere'), kind='owned')])
     monkeypatch.setattr(main, 'get_target_by_name', lambda name: None)
 
-    result = runner.invoke(indy_app, ['index', 'dotfile'])
+    result = runner.invoke(indy_app, ['index', 'website'])
 
     assert result.exit_code == 2
     assert 'did you mean' in result.output
