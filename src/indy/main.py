@@ -30,7 +30,14 @@ from indy.repos import all_index_targets
 from indy.repos import get_target_by_name
 from indy.storage import IndexNotFoundError
 
-indy_app = typer.Typer(name='indy', no_args_is_help=True, help='Semantic search index for local codebases, docs, and notes.')
+# Markdown, so a docstring wrapped at the source's width reflows to the terminal's. Under the
+# default rich mode, every line break after a command's first paragraph is printed as written.
+indy_app = typer.Typer(
+    name='indy',
+    no_args_is_help=True,
+    rich_markup_mode='markdown',
+    help='Semantic search index for local codebases, docs, and notes.',
+)
 console = Console(highlight=False)
 err_console = Console(highlight=False, stderr=True)
 
@@ -698,7 +705,7 @@ def repos(
     console.print(table)
 
 
-config_app = typer.Typer(name='config', no_args_is_help=True, help='Inspect the resolved settings.')
+config_app = typer.Typer(name='config', no_args_is_help=True, rich_markup_mode='markdown', help='Inspect the resolved settings.')
 indy_app.add_typer(config_app)
 
 
