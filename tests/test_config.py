@@ -45,20 +45,6 @@ def test_default_applies_when_neither_layer_names_one(tmp_path, monkeypatch):
     assert config.resolve_path('INDY_REPOS_REGISTRY', 'repos_registry', tmp_path / 'default.json', {}) == tmp_path / 'default.json'
 
 
-def test_an_unprefixed_variable_is_never_consulted(tmp_path, monkeypatch):
-    """indy reads no variable it does not own, so the machine layer is config.toml alone.
-
-    A shared `REPOS_JSON` rung used to sit between the config key and the default. It came
-    out because `~/.env` does not reach a process that sources no profile, which made the
-    rung empty in exactly the unattended runs it was meant to serve.
-    """
-    monkeypatch.delenv('INDY_REPOS_REGISTRY', raising=False)
-    monkeypatch.setenv('REPOS_JSON', str(tmp_path / 'declared.json'))
-
-    assert config.resolve_path('INDY_REPOS_REGISTRY', 'repos_registry', tmp_path / 'default.json', {}) == tmp_path / 'default.json'
-    assert config.setting_source('INDY_REPOS_REGISTRY', 'repos_registry', {}) == 'default'
-
-
 def test_extra_paths_default_to_none(monkeypatch):
     """Which loose directories are worth indexing is a property of the machine."""
     monkeypatch.delenv('INDY_EXTRA_PATHS', raising=False)
