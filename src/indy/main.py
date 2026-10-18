@@ -258,6 +258,8 @@ def announce_stage(stage: str) -> None:
     Both are silent multi-second pauses on an index this size, and an unexplained pause in a
     long-running command reads as a hang. What they say is what the run is doing to the
     index, never how it is done — a working copy and a rename are indy's business.
+    'overlay busy' follows the save when the watcher holds its saved files, so the run says
+    who reconciles them instead of ending silently with them in place.
     """
     if stage == 'snapshot':
         size = service.index_size_bytes()
@@ -265,6 +267,8 @@ def announce_stage(stage: str) -> None:
             err_console.print(f'Snapshotting the index ({format_size(size)})')
     elif stage == 'save':
         err_console.print('Saving the updated index')
+    elif stage == 'overlay busy':
+        err_console.print('`indy watch` is writing its saved files, so it reconciles them with this index')
 
 
 def format_current_file(name: str) -> str:

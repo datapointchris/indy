@@ -43,6 +43,9 @@ the run pruned. Under the labels the session itself indexed, a row also drops wh
 read its file at the same or a later mtime. Both mtimes then come from this machine's
 files. Anywhere else the base's mtime may come from another machine's copy, so the match is
 by content hash alone. Linked worktree rows stay, because no full index walks a worktree.
+When `indy watch` holds the overlay past its busy timeout, the run leaves the overlay to the
+watcher and still succeeds. The watcher compacts against the new stamp anyway, and failing
+would report an index that is already in place as a failed run.
 
 ## The index is replaced, never written
 

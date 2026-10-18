@@ -185,6 +185,24 @@ def test_a_full_index_that_read_a_newer_save_takes_the_file_back_from_the_overla
     assert symbols('sketch') == [(str(repo / 'tools.py'), None)]
 
 
+def test_a_full_index_leaves_an_overlay_the_watcher_holds_to_the_watcher(repo, overlay, monkeypatch):
+    """`indy watch` is mid-write when the run finishes: the new base stays in place and the run succeeds."""
+    save(overlay, service.LiveRoot(repo, 'r'), 'tools.py', TOOLS_EDITED)
+    (repo / 'tools.py').write_text(TOOLS_EDITED.replace('paint', 'sketch'))
+    monkeypatch.setattr(storage, 'OVERLAY_BUSY_SECONDS', 0.1)
+    stages: list[str] = []
+    overlay.execute('BEGIN IMMEDIATE')
+    try:
+        service.index_path(repo, 'r', on_stage=stages.append)
+    finally:
+        overlay.rollback()
+
+    assert stages == ['snapshot', 'save', 'overlay busy']
+    assert storage.get_overlay_paths(overlay, '') == [str(repo / 'tools.py')]
+    assert symbols('sketch') == [(str(repo / 'tools.py'), None)]
+    assert service.compact_live_overlay({'r'}) == {'files': 1, 'tombstones': 0}
+
+
 def test_a_base_a_syncer_delivers_into_data_dir_sets_aside_an_overlay_reconciled_with_the_last_one(repo, overlay, monkeypatch, tmp_path):
     """The receiving machine's watcher is stopped, so nothing has compared its saves with the base that arrived."""
     save(overlay, service.LiveRoot(repo, 'r'), 'tools.py', TOOLS_EDITED.replace('paint', 'sketch'))
