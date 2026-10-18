@@ -1059,9 +1059,10 @@ def watch(
                     continue
                 started = time.perf_counter()
                 try:
-                    change = update_overlay(conn, path, root)
+                    # A call that changed nothing still holds its DELETEs' write lock until this commits.
+                    with conn:
+                        change = update_overlay(conn, path, root)
                 except Exception as exc:
-                    conn.rollback()
                     tries = attempts.get(path, 0) + 1
                     delay = RETRY_FIRST_SECONDS * 2 ** (tries - 1)
                     if delay > RETRY_LAST_SECONDS:
