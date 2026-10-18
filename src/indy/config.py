@@ -72,7 +72,10 @@ def load_user_config(path: Path | None = None) -> dict[str, Any]:
     path = CONFIG_PATH if path is None else path
     if not path.exists():
         return {}
-    parsed = tomllib.loads(path.read_text())
+    try:
+        parsed = tomllib.loads(path.read_text())
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError(f'{path}: {exc}') from exc
     unknown = sorted(set(parsed) - KNOWN_KEYS)
     if unknown:
         known = ', '.join(sorted(KNOWN_KEYS))
@@ -80,7 +83,15 @@ def load_user_config(path: Path | None = None) -> dict[str, Any]:
     return parsed
 
 
-USER_CONFIG = load_user_config()
+# Read at import, because every path below resolves from it. A fault is held rather than
+# raised. Raised here, it would escape while the CLI is still importing, before any handler
+# exists, and print as a traceback. main() reports it and refuses to run a command.
+try:
+    USER_CONFIG = load_user_config()
+    USER_CONFIG_FAULT: ConfigError | None = None
+except ConfigError as fault:
+    USER_CONFIG = {}
+    USER_CONFIG_FAULT = fault
 
 
 def resolve_path(

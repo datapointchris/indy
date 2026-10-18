@@ -21,6 +21,7 @@ from rich.progress import TaskID
 from rich.progress import TextColumn
 from rich.table import Table
 
+import indy.config as config
 import indy.service as service
 from indy.charts import horizontal_bars
 from indy.charts import streamline
@@ -753,7 +754,13 @@ def main() -> None:
     Wraps the app so a machine with no index yet — the ordinary state of one that searches a
     snapshot a peer has not delivered — gets the sentence telling it what to do, rather than
     a traceback out of the connection layer.
+
+    A config.toml fault is found at import, before the app exists, so it is checked first.
+    Every command resolves its paths from that file, so none of them runs.
     """
+    if config.USER_CONFIG_FAULT:
+        err_console.print(f'[red]{escape(str(config.USER_CONFIG_FAULT))}[/red]', soft_wrap=True)
+        sys.exit(1)
     try:
         indy_app()
     except IndexNotFoundError as exc:
