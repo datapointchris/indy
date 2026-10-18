@@ -110,8 +110,8 @@ def is_excluded(relative_path: str, patterns: tuple[str, ...]) -> bool:
     and the last matching pattern wins.
 
     That ordering is what lets a repo drop a whole tree but keep one branch of it.
-    FastAPI ships 14 doc translations, so `docs/*/**` then `!docs/en/**` indexes the
-    154 English pages and skips the 1501 near-duplicates of them.
+    FastAPI ships its docs in every language they are translated into, so `docs/*/**`
+    then `!docs/en/**` indexes the English pages and skips every translation of them.
     """
     path = PurePosixPath(relative_path)
     excluded = False

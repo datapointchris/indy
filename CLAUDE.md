@@ -52,8 +52,9 @@ exists to preserve them.
 **Nothing ever opens `indy.db` for writing.** A run seeds `indy.db.building` beside it with
 `VACUUM INTO`, indexes into that, and renames the finished copy over `indy.db` —
 `service.index_session`, over `storage.open_working_db` and `commit_working_db`. One session
-spans a whole invocation, not one per target: the swap costs a copy of the database, so per
-target would be seventy copies. `clear_errors` goes through the same session; copying the
+spans a whole invocation, not one per target: the swap costs a copy of the database, so a
+session per target would copy it once for every target a full run covers rather than once.
+`clear_errors` goes through the same session; copying the
 whole database to delete a few rows is disproportionate, and it is the price of there being
 no second write path.
 
@@ -135,8 +136,21 @@ work when `data_dir` points at a replicated tree.
 
 An exemplar's `index_exclude` patterns apply on top, using gitignore semantics: patterns in order,
 leading `!` re-includes, last match wins. This is what a global skip-list cannot express — FastAPI
-ships 14 doc translations, so `docs/*/**` then `!docs/en/**` keeps the 154 English pages and drops
-1501 near-duplicates. Across the exemplar corpus these patterns cut 33% of indexed files.
+ships its docs in every language they are translated into, so `docs/*/**` then `!docs/en/**`
+keeps the English pages and drops every translation of them. This prints how much the patterns
+cut across the exemplar clones:
+
+```bash
+uv run python - <<'EOF'
+from indy.repos import load_exemplar_repos
+from indy.service import collect_indexable_files
+
+targets = load_exemplar_repos()
+walked = sum(len(collect_indexable_files(t.path)) for t in targets)
+kept = sum(len(collect_indexable_files(t.path, t.exclude)) for t in targets)
+print(f'index_exclude drops {walked - kept} of {walked} exemplar files')
+EOF
+```
 
 ## Key Decisions
 
@@ -171,7 +185,8 @@ ships 14 doc translations, so `docs/*/**` then `!docs/en/**` keeps the 154 Engli
   no venv is skipped, because without the project installed scip-python names its modules
   after their paths (`src.pkg.mod`). A machine without Node.js skips every repo. A skipped
   or failed repo keeps no SCIP rows, and `scip_index` records why. Exemplars are left out. A
-  run takes about twenty seconds on a large repo, which no save can wait for.
+  run on a large repo takes tens of seconds, which no save can wait for.
+  `indy status --json | jq '.scip[] | {repo, seconds}'` prints each repo's last run time.
 - **scip-python is pinned with its whole dependency tree, by the lockfile in
   `src/indy/scip_python/`.** `npm ci --ignore-scripts` installs it once per lockfile under
   the cache directory, and `npx --prefix --no` runs that copy. `npx --yes pkg@version` would
