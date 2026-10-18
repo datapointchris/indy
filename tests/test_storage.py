@@ -100,17 +100,17 @@ def test_forgetting_a_label_takes_every_table_with_it(indy_dir):
     it was first indexed under however many runs go past.
     """
     conn = storage.open_working_db()
-    stale_chunk = add_indexed_file(conn, 'notes-dev', '~/notes/dev/a.md')
-    add_indexed_file(conn, 'notes', '~/notes/b.md')
+    stale_chunk = add_indexed_file(conn, 'writing-drafts', '~/writing/drafts/a.md')
+    add_indexed_file(conn, 'writing', '~/writing/b.md')
     storage.commit_working_db(conn)
 
-    assert service.forget_repo('notes-dev') == {'files': 1, 'chunks': 1, 'runs': 1}
+    assert service.forget_repo('writing-drafts') == {'files': 1, 'chunks': 1, 'runs': 1}
 
     read = storage.get_read_db()
-    assert read.execute('SELECT COUNT(*) FROM indexed_file WHERE repo = ?', ('notes-dev',)).fetchone()[0] == 0
-    assert read.execute('SELECT COUNT(*) FROM chunk WHERE repo = ?', ('notes-dev',)).fetchone()[0] == 0
-    assert read.execute('SELECT COUNT(*) FROM index_run WHERE repo = ?', ('notes-dev',)).fetchone()[0] == 0
-    assert read.execute('SELECT COUNT(*) FROM symbol_reference WHERE source_file = ?', ('~/notes/dev/a.md',)).fetchone()[0] == 0
+    assert read.execute('SELECT COUNT(*) FROM indexed_file WHERE repo = ?', ('writing-drafts',)).fetchone()[0] == 0
+    assert read.execute('SELECT COUNT(*) FROM chunk WHERE repo = ?', ('writing-drafts',)).fetchone()[0] == 0
+    assert read.execute('SELECT COUNT(*) FROM index_run WHERE repo = ?', ('writing-drafts',)).fetchone()[0] == 0
+    assert read.execute('SELECT COUNT(*) FROM symbol_reference WHERE source_file = ?', ('~/writing/drafts/a.md',)).fetchone()[0] == 0
     assert read.execute('SELECT COUNT(*) FROM vec_chunks WHERE rowid = ?', (stale_chunk,)).fetchone()[0] == 0
     read.close()
 
@@ -118,17 +118,17 @@ def test_forgetting_a_label_takes_every_table_with_it(indy_dir):
 def test_forgetting_one_label_leaves_its_neighbour_whole(indy_dir):
     """The two labels share a path prefix, which is how the stale one arose in the first place."""
     conn = storage.open_working_db()
-    add_indexed_file(conn, 'notes-dev', '~/notes/dev/a.md')
-    kept_chunk = add_indexed_file(conn, 'notes', '~/notes/b.md')
+    add_indexed_file(conn, 'writing-drafts', '~/writing/drafts/a.md')
+    kept_chunk = add_indexed_file(conn, 'writing', '~/writing/b.md')
     storage.commit_working_db(conn)
 
-    service.forget_repo('notes-dev')
+    service.forget_repo('writing-drafts')
 
     read = storage.get_read_db()
-    assert read.execute('SELECT COUNT(*) FROM indexed_file WHERE repo = ?', ('notes',)).fetchone()[0] == 1
-    assert read.execute('SELECT COUNT(*) FROM chunk WHERE repo = ?', ('notes',)).fetchone()[0] == 1
-    assert read.execute('SELECT COUNT(*) FROM index_run WHERE repo = ?', ('notes',)).fetchone()[0] == 1
-    assert read.execute('SELECT COUNT(*) FROM symbol_reference WHERE source_file = ?', ('~/notes/b.md',)).fetchone()[0] == 1
+    assert read.execute('SELECT COUNT(*) FROM indexed_file WHERE repo = ?', ('writing',)).fetchone()[0] == 1
+    assert read.execute('SELECT COUNT(*) FROM chunk WHERE repo = ?', ('writing',)).fetchone()[0] == 1
+    assert read.execute('SELECT COUNT(*) FROM index_run WHERE repo = ?', ('writing',)).fetchone()[0] == 1
+    assert read.execute('SELECT COUNT(*) FROM symbol_reference WHERE source_file = ?', ('~/writing/b.md',)).fetchone()[0] == 1
     assert read.execute('SELECT COUNT(*) FROM vec_chunks WHERE rowid = ?', (kept_chunk,)).fetchone()[0] == 1
     read.close()
 
@@ -367,8 +367,7 @@ def test_pruning_only_touches_the_root_that_was_walked(indy_dir, tmp_path):
 def test_a_file_the_walk_never_reaches_is_not_pruned(indy_dir, tmp_path, stub_embedding):
     """Absence from the walk is not absence from disk, and pruning on the first deletes
     live content. Path.walk does not follow a symlink, so a symlinked subtree indexed
-    while it was a real directory vanishes on the next run. ~/dev/standards became a
-    symlink and took the fleet's standards out of the index exactly this way.
+    while it was a real directory vanishes on the next run.
     """
     root = make_repo(tmp_path, **{'a.md': '# A\n\nSome prose.\n'})
     elsewhere = tmp_path / 'elsewhere'

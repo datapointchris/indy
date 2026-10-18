@@ -421,7 +421,11 @@ def errors() -> None:
 
 @indy_app.command('errors-clear')
 def errors_clear():
-    """Remove all error records from the index, so they are re-attempted on next index run."""
+    """Empty the list `indy errors` shows.
+
+    Clearing retries nothing. An `indy index` run retries every failed file
+    in the targets it covers, and records a file again if it fails again.
+    """
     cleared = service.clear_errors(on_stage=announce_stage)
     if cleared:
         console.print(f'Cleared {cleared} error record{"s" if cleared != 1 else ""}.')

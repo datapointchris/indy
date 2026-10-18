@@ -19,27 +19,27 @@ def write_registries(tmp_path, monkeypatch, portfolio, exemplars):
 def test_same_name_in_both_registries_stays_distinct(tmp_path, monkeypatch):
     """A repo you own and an exemplar clone can share a bare name. Indexing them under
     one label merged their chunks and put the name in both the owned and exemplar sets."""
-    mine = tmp_path / 'homelab'
-    theirs = tmp_path / 'refs' / 'homelab'
+    mine = tmp_path / 'blog'
+    theirs = tmp_path / 'refs' / 'blog'
     mine.mkdir()
     theirs.mkdir(parents=True)
 
     write_registries(
         tmp_path,
         monkeypatch,
-        portfolio=[{'name': 'homelab', 'path': str(mine), 'status': 'active'}],
-        exemplars=[{'name': 'homelab', 'path': str(theirs), 'owner': 'upstream'}],
+        portfolio=[{'name': 'blog', 'path': str(mine), 'status': 'active'}],
+        exemplars=[{'name': 'blog', 'path': str(theirs), 'owner': 'upstream'}],
     )
 
     owned = repos.get_owned_repo_names()
     exemplar = repos.get_exemplar_repo_names()
 
-    assert owned == {'homelab'}
-    assert exemplar == {'upstream/homelab'}
+    assert owned == {'blog'}
+    assert exemplar == {'upstream/blog'}
     assert not (owned & exemplar), 'a name must never land in both sets'
 
-    assert repos.get_target_by_name('homelab').path == mine
-    assert repos.get_target_by_name('upstream/homelab').path == theirs
+    assert repos.get_target_by_name('blog').path == mine
+    assert repos.get_target_by_name('upstream/blog').path == theirs
 
 
 def test_dormant_repos_are_not_indexed(tmp_path, monkeypatch):
@@ -60,9 +60,9 @@ def test_dormant_repos_are_not_indexed(tmp_path, monkeypatch):
 
 
 def test_a_repo_with_no_status_is_rejected(tmp_path, monkeypatch):
-    """Skipping it silently is what let this reader disagree with fleet about which
-    repos exist. fleet counted a status-less entry as active, indy dropped it, and
-    both produced a plausible list with no way to notice the difference."""
+    """Another reader of the registry may count a status-less entry as active. Were
+    indy to drop it silently, both would produce a plausible list with no way to
+    notice the difference."""
     active = tmp_path / 'active'
     undeclared = tmp_path / 'undeclared'
     active.mkdir()

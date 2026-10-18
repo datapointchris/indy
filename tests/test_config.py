@@ -67,13 +67,13 @@ def test_extra_paths_default_to_none(monkeypatch):
 
 def test_extra_paths_come_from_the_config_file(monkeypatch):
     monkeypatch.delenv('INDY_EXTRA_PATHS', raising=False)
-    entries = [{'name': 'notes', 'path': '~/notes'}]
+    entries = [{'name': 'writing', 'path': '~/writing'}]
     assert config.resolve_extra_paths({'extra_paths': entries}) == entries
 
 
 def test_extra_paths_env_var_takes_json(monkeypatch):
     monkeypatch.setenv('INDY_EXTRA_PATHS', '[{"name": "scratch", "path": "/tmp/scratch"}]')
-    assert config.resolve_extra_paths({'extra_paths': [{'name': 'notes', 'path': '~/notes'}]}) == [
+    assert config.resolve_extra_paths({'extra_paths': [{'name': 'writing', 'path': '~/writing'}]}) == [
         {'name': 'scratch', 'path': '/tmp/scratch'}
     ]
 
@@ -91,12 +91,10 @@ def test_setting_source_names_the_layer(monkeypatch):
 
 
 def test_a_key_indy_does_not_read_is_refused(tmp_path):
-    """Measured 2026-08-13: `exemplar_repos_file` sat in the deployed config after the key
-    became `exemplar_registry`. indy read the file, dropped the key, resolved its own config
-    directory and found nothing — indistinguishable from a machine that declared no exemplar
-    registry at all."""
+    """A key left under an old name would otherwise drop in silence, leaving its setting on
+    the default, which is indistinguishable from a machine that never declared it."""
     config_file = tmp_path / 'config.toml'
-    config_file.write_text('exemplar_repos_file = "~/dev/exemplar-repos.json"\n')
+    config_file.write_text('exemplar_repos_file = "~/registries/exemplar-repos.json"\n')
     with pytest.raises(config.ConfigError) as exc:
         config.load_user_config(config_file)
     assert 'exemplar_repos_file' in str(exc.value)

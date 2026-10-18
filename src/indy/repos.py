@@ -33,8 +33,9 @@ def load_portfolio_repos() -> list[IndexTarget]:
     """Active repos we own, from repos.json. Indexed under their bare registry name.
 
     `status` is required, so a missing one is an error rather than a repo quietly
-    left out of the index. Skipping it silently is what let this reader disagree
-    with fleet about which repos exist, with neither able to say so.
+    left out of the index. Another tool reading the same registry may count a
+    status-less entry as active. Skipping it silently would let the two disagree
+    about which repos exist, with neither able to say so.
     """
     repos = load_json_file(REPOS_REGISTRY).get('repos', [])
     missing = [repo.get('name', '(unnamed)') for repo in repos if 'status' not in repo]

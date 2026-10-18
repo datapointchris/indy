@@ -11,9 +11,9 @@ the default. It came out because `~/.env` does not reach a process that sources 
 so the rung was empty in exactly the unattended runs it was supposed to serve, and the
 machine layer is what config.toml already is.
 
-OLLAMA_HOST and OLLAMA_MODEL are the two unprefixed names left, and they stay. Those are
-ollama's own published variables rather than this fleet's vocabulary, so reading them is
-interoperating with the service, not accepting a path from somewhere indy cannot see.
+OLLAMA_HOST and OLLAMA_MODEL are the unprefixed variables indy reads. ollama itself publishes
+them, so reading them is interoperating with the service, not accepting a path from somewhere
+indy cannot see.
 """
 
 from __future__ import annotations
@@ -62,12 +62,9 @@ def load_user_config(path: Path | None = None) -> dict[str, Any]:
 
     Absent is not an error: a machine keeping everything where indy expects it should not
     have to hold a file saying so. Present and carrying a key indy does not read is, because
-    the two used to be the same answer and that is how a rename hides.
-
-    Measured 2026-08-13 on this fleet: `exemplar_repos_file` sat in the deployed config after
-    the key became `exemplar_registry`. indy read the file, dropped the key, resolved its own
-    config directory, and found nothing there — which reads exactly like a machine that never
-    declared an exemplar registry at all.
+    that is how a renamed key hides. Dropped in silence, a key left under its old name leaves
+    its setting on the default, and a default registry that holds nothing reads exactly like
+    a machine that never declared one.
     """
     path = CONFIG_PATH if path is None else path
     if not path.exists():

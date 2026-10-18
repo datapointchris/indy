@@ -90,9 +90,10 @@ indexed and offered to re-embed every file.
 ## Two Registries
 
 `repos_registry` holds the portfolio — repos we work in. `exemplar_registry` holds third-party
-clones kept to be *read* as examples of specific patterns; each entry carries `exemplary_for`
-(what it demonstrates) and `index_exclude` (subtrees to keep out of the index). They are
-separate files because the two answer different questions and need different fields.
+clones kept to be *read* as examples of specific patterns. indy reads `name`, `path`, `owner`
+and an optional `index_exclude` (subtrees to keep out of the index) from each exemplar entry,
+and ignores any other field. They are separate files because the two answer different
+questions and need different fields.
 
 **Exemplars are indexed under a qualified `owner/name`.** Bare names collide across the two
 registries, because a clone commonly shares its name with a repo you own, and a collision puts
@@ -108,8 +109,8 @@ exist, so nothing else revisits the path that stopped existing.
 
 **Gone from disk, not missing from the walk.** The two read as the same test and are not.
 `Path.walk` does not follow a symlink, so anything behind one is absent from the walk while
-still being there — `~/dev/standards` became a symlink and a walk-based prune took the whole
-of the fleet's standards out of the index on the next run. Pruning on disk absence instead
+still being there — a directory moved elsewhere and replaced by a symlink to it would drop out
+of the index whole on the next run under a walk-based prune. Pruning on disk absence instead
 means a file newly covered by an exclude pattern keeps its rows until it is really deleted,
 which leaves stale content rather than losing live content. The prune is also skipped
 entirely when the walk finds nothing, since an unmounted root makes every path missing at
@@ -132,7 +133,7 @@ Chunk paths are stored `~`-relative (`compact_path`), so one index file is porta
 machines and platforms — which is what makes "index on one machine, search from all of them"
 work when `data_dir` points at a replicated tree.
 
-Per-target `index_exclude` patterns apply on top, using gitignore semantics: patterns in order,
+An exemplar's `index_exclude` patterns apply on top, using gitignore semantics: patterns in order,
 leading `!` re-includes, last match wins. This is what a global skip-list cannot express — FastAPI
 ships 14 doc translations, so `docs/*/**` then `!docs/en/**` keeps the 154 English pages and drops
 1501 near-duplicates. Across the exemplar corpus these patterns cut 33% of indexed files.

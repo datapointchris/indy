@@ -349,10 +349,11 @@ def prune_missing_files(conn: sqlite3.Connection, repo_name: str, root: Path) ->
 
     Absence from disk, not absence from the walk. The two look equivalent and are not: a
     walk stops at a symlinked subtree, since Path.walk does not follow one, so pruning
-    what the walk missed deletes files that are still there. `~/dev/standards` became a
-    symlink and took the fleet's standards out of the index on the next run. The cost of
-    the narrow rule is that a file newly covered by an exclude pattern keeps its rows
-    until it is deleted, which leaves stale content rather than losing live content.
+    what the walk missed deletes files that are still there. A directory moved elsewhere
+    and replaced by a symlink to it would drop out of the index whole on the next run.
+    The cost of the narrow rule is that a file newly covered by an exclude pattern keeps
+    its rows until it is deleted, which leaves stale content rather than losing live
+    content.
     """
     prefix = compact_path(str(root)).rstrip('/')
     stale = [

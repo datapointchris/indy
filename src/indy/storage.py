@@ -44,11 +44,12 @@ def open_working_db() -> sqlite3.Connection:
 
     indy.db itself is never written. It is seeded into a copy here and the finished copy is
     renamed over it by commit_working_db(), so the file on disk is replaced whole and is
-    never open for writing — the two properties that make it safe to replicate, and the two
-    it lacked when a syncer corrupted the index across the fleet.
+    never open for writing. Those are the two properties that make it safe for a file syncer
+    to replicate. Without them, a syncer copies blocks read at different moments, and every
+    replica can end up corrupt.
 
     VACUUM INTO rather than a file copy: it reads inside a transaction, so the seed is one
-    instant of the database and needs no -wal alongside it to be complete. A crashed run now
+    instant of the database and needs no -wal alongside it to be complete. A crashed run
     costs only the working copy, since the index it was built from was never touched.
     """
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
