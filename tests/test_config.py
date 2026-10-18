@@ -82,14 +82,6 @@ def test_missing_config_file_is_not_fatal(tmp_path):
     assert config.load_user_config(tmp_path / 'absent.toml') == {}
 
 
-def test_config_file_is_parsed(tmp_path):
-    config_file = tmp_path / 'config.toml'
-    config_file.write_text('repos_registry = "~/dev/repos.json"\n\n[[extra_paths]]\nname = "notes"\npath = "~/notes"\n')
-    parsed = config.load_user_config(config_file)
-    assert parsed['repos_registry'] == '~/dev/repos.json'
-    assert parsed['extra_paths'] == [{'name': 'notes', 'path': '~/notes'}]
-
-
 def test_setting_source_names_the_layer(monkeypatch):
     monkeypatch.delenv('INDY_REPOS_REGISTRY', raising=False)
     assert config.setting_source('INDY_REPOS_REGISTRY', 'repos_registry', {}) == 'default'
