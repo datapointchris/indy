@@ -21,6 +21,12 @@ def test_version_is_one_line_naming_the_tool_and_exits_clean():
     assert len(result.stdout.strip().splitlines()) == 1
 
 
+def test_no_input_is_accepted_ahead_of_any_command():
+    """A caller passing --no-input to every tool it runs gets the command, not a usage error."""
+    result = runner.invoke(indy_app, ['--no-input', 'config', 'show', '--json'])
+    assert result.exit_code == 0
+
+
 def test_bare_invocation_shows_help_rather_than_doing_anything():
     """Help on stdout and exit 2 — incomplete command, not a failed one."""
     result = runner.invoke(indy_app, [])

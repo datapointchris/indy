@@ -68,6 +68,10 @@ def root(
         bool | None,
         typer.Option('--version', callback=version_callback, is_eager=True, help='Show the installed version and exit.'),
     ] = None,
+    no_input: Annotated[
+        bool,
+        typer.Option('--no-input', help='Never prompt. indy has no prompts, so this is always the case.'),
+    ] = False,
 ) -> None:
     """Root callback, hosting the daily update check and app-level options.
 
@@ -75,6 +79,9 @@ def root(
     lands after the command's own output. `indy update` is the only place an
     update failure is reported, and is skipped here because it is about to do
     the thing the notice would suggest.
+
+    `--no-input` is accepted and has no effect. indy never prompts, but a caller
+    that passes the flag to every tool it runs must not get a usage error here.
     """
     if ctx.invoked_subcommand != 'update':
         notify(UPDATE_CONFIG)
