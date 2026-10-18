@@ -150,7 +150,6 @@ def resolve_extra_paths(config: dict[str, Any] | None = None) -> list[dict[str, 
 # once and search everywhere puts it in a synced tree instead.
 INDY_DIR = resolve_path('INDY_DIR', 'data_dir', DATA_HOME / 'indy')
 DB_PATH = INDY_DIR / 'indy.db'
-LOG_PATH = INDY_DIR / 'indy.log'
 
 # What an index run builds into before renaming the result over DB_PATH. Beside the index
 # rather than in a temp directory because os.replace is only atomic within one filesystem,
