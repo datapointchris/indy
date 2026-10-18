@@ -161,7 +161,7 @@ def index(
         BarColumn(),
         TextColumn('{task.fields[counts]}'),
         TextColumn('{task.fields[current_file]}'),
-        console=console,
+        console=err_console,
     )
 
     def make_progress_callback(task_id: TaskID) -> service.ProgressCallback:
@@ -245,11 +245,11 @@ def index(
         # The session has already swapped the partial index in by the time this runs. Say so:
         # stopping a run that has been going for hours needs to state what was kept, or the
         # next run offering to re-embed everything is the only answer you get.
-        console.print('\n[bold]Stopped.[/bold] Everything embedded before the interrupt is in the index.')
+        err_console.print('\n[bold]Stopped.[/bold] Everything embedded before the interrupt is in the index.')
         raise typer.Exit(130) from None
 
     elapsed = time.perf_counter() - t0
-    console.print(f'Completed in {format_elapsed(elapsed)}')
+    err_console.print(f'Completed in {format_elapsed(elapsed)}')
 
 
 def announce_stage(stage: str) -> None:
@@ -262,9 +262,9 @@ def announce_stage(stage: str) -> None:
     if stage == 'snapshot':
         size = service.index_size_bytes()
         if size:
-            console.print(f'Snapshotting the index ({format_size(size)})')
+            err_console.print(f'Snapshotting the index ({format_size(size)})')
     elif stage == 'save':
-        console.print('Saving the updated index')
+        err_console.print('Saving the updated index')
 
 
 def format_current_file(name: str) -> str:
@@ -466,7 +466,7 @@ def watch():
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: stop.set())
     service.watch(stop, on_change=print_live_change, on_note=print_note, on_problem=print_problem)
-    console.print('Stopped.')
+    err_console.print('Stopped.')
 
 
 def clock() -> str:
@@ -487,7 +487,7 @@ def print_live_change(change: service.LiveChange) -> None:
 
 
 def print_note(message: str) -> None:
-    console.print(f'{clock()} {escape(message)}', soft_wrap=True)
+    err_console.print(f'{clock()} {escape(message)}', soft_wrap=True)
 
 
 def print_problem(message: str) -> None:
