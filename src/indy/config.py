@@ -5,11 +5,10 @@ environment variable, then a key in config.toml, then a tool-owned default. No d
 a directory outside indy's own XDG dirs — where a repo registry lives, or which loose
 directories are worth indexing, is a property of the machine and belongs in config.toml.
 
-Three rungs, and no path indy resolves is named by a variable indy does not own. A shared
-variable naming the registry for every tool at once used to sit between the config key and
-the default. It came out because `~/.env` does not reach a process that sources no profile,
-so the rung was empty in exactly the unattended runs it was supposed to serve, and the
-machine layer is what config.toml already is.
+Three rungs, and no path indy resolves is named by a variable indy does not own. A variable
+shared by every tool would be set in a shell profile, and a process that sources no profile
+never sees it, so it would be empty in exactly the unattended runs that most need the
+setting. config.toml is already the machine layer.
 
 OLLAMA_HOST and OLLAMA_MODEL are the unprefixed variables indy reads. ollama itself publishes
 them, so reading them is interoperating with the service, not accepting a path from somewhere
