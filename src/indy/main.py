@@ -7,6 +7,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Annotated
+from typing import Literal
 
 import typer
 from pyselfupdate import Config
@@ -147,8 +148,7 @@ def index(
     complete either.
     """
     if repo and path:
-        err_console.print('[red]Cannot specify both repo name and --path.[/red]')
-        raise typer.Exit(1)
+        raise typer.BadParameter('cannot be combined with a repo name.', param_hint="'--path'")
 
     t0 = time.perf_counter()
 
@@ -506,8 +506,7 @@ def search(
 ):
     """Semantic search across indexed code and notes."""
     if owned and reference:
-        err_console.print('[red]Cannot use --owned and --reference together.[/red]')
-        raise typer.Exit(1)
+        raise typer.BadParameter('cannot be combined with --reference.', param_hint="'--owned'")
     ownership = True if owned else (False if reference else None)
     results = service.search(query, repo=repo, language=language, limit=limit, owned=ownership)
 
@@ -562,7 +561,7 @@ def symbol(
 def deps(
     symbol_name: str = typer.Argument(..., help="A bare name, or 'Owner.member' for a method or a module's function."),
     repo: str = typer.Option(None, '--repo', '-r', help='Limit to this repo.'),
-    direction: str = typer.Option('both', '--direction', '-d', help="'callers', 'callees', or 'both'."),
+    direction: Literal['callers', 'callees', 'both'] = typer.Option('both', '--direction', '-d', help='Which side of the graph to list.'),
     as_json: bool = typer.Option(False, '--json', help='Output as JSON to stdout.'),
 ):
     """Find what calls a symbol or what it calls, using the Python reference graph.
@@ -576,10 +575,6 @@ def deps(
     Two more labels appear there: inferred (a call on a receiver only a type checker types,
     as a local assigned from a call), and override (a call to a method this one overrides).
     """
-    if direction not in ('callers', 'callees', 'both'):
-        err_console.print("[red]--direction must be 'callers', 'callees', or 'both'.[/red]")
-        raise typer.Exit(1)
-
     result = service.get_dependencies(symbol_name, repo=repo, direction=direction)
     if as_json:
         print_json({**result, 'freshness': service.index_freshness(repo=repo)})
