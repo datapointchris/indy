@@ -1,5 +1,6 @@
 """The machine contract: what a caller shelling out to indy can rely on."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,27 @@ def test_config_is_a_namespace_and_show_is_the_read():
     shown = runner.invoke(indy_app, ['config', 'show', '--json'])
     assert shown.exit_code == 0
     assert '"settings"' in shown.stdout
+
+
+@pytest.mark.parametrize(
+    ('args', 'expected'),
+    [
+        (['errors', '--json'], {'error_file_details': []}),
+        (['stats', '--json'], {'repos': []}),
+        (['stats', 'notes', '--json'], {'repo': 'notes', 'scans': []}),
+    ],
+)
+def test_an_empty_read_is_an_empty_array_at_exit_zero(monkeypatch, args, expected):
+    """A script writes one filter for every result, so nothing found is `[]`, never null or a failure."""
+    monkeypatch.setattr(service, 'get_status', lambda: {'error_file_details': []})
+    monkeypatch.setattr(service, 'list_repos', lambda: [])
+    monkeypatch.setattr(service, 'repo_scan_history', lambda repo: [])
+    monkeypatch.setattr(main, 'get_target_by_name', lambda name: IndexTarget(name=name, path=Path('/nowhere'), kind='owned'))
+
+    result = runner.invoke(indy_app, args)
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == expected
 
 
 def test_forgetting_an_unknown_label_is_a_usage_error(monkeypatch):

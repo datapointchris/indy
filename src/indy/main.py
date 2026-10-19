@@ -413,10 +413,15 @@ def describe_scip(state: dict) -> str:
 
 
 @indy_app.command('errors')
-def errors() -> None:
+def errors(
+    as_json: bool = typer.Option(False, '--json', help='Output as JSON to stdout.'),
+) -> None:
     """Show all indexing errors, grouped by repo with per-file details."""
-    stats = service.get_status()
-    error_details = stats.get('error_file_details', [])
+    error_details = service.get_status()['error_file_details']
+    if as_json:
+        # The key `status --json` carries the same rows under, so one filter reads both.
+        print_json({'error_file_details': error_details})
+        return
 
     if not error_details:
         console.print('No errors.')
@@ -623,16 +628,21 @@ def deps(
 @indy_app.command('stats')
 def stats(
     repo: str = typer.Argument(None, help='Show scan history for a specific repo.'),
+    as_json: bool = typer.Option(False, '--json', help='Output as JSON to stdout.'),
 ):
     """Show index size per repo with charts, or scan history for a specific repo."""
     if repo:
         history = service.repo_scan_history(repo)
-        if not history:
-            if get_target_by_name(repo) is None:
-                err_console.print(f'[red]Repo {repo!r} not found. Exemplar clones are named owner/repo.[/red]')
-            else:
-                err_console.print(f'No scan history for {repo!r}. Run [bold]indy index {repo}[/bold] first.')
+        if not history and get_target_by_name(repo) is None:
+            err_console.print(f'[red]Repo {repo!r} not found. Exemplar clones are named owner/repo.[/red]')
             raise typer.Exit(1)
+        # A known repo that was never scanned is an empty answer, not a failure, at either door.
+        if as_json:
+            print_json({'repo': repo, 'scans': history})
+            return
+        if not history:
+            console.print(f'No scan history for {repo!r}. Run [bold]indy index {repo}[/bold] first.')
+            return
 
         labels = [h['started_at'][5:10] for h in history]
         files_updated = [float(h['files_updated'] or 0) for h in history]
@@ -658,6 +668,10 @@ def stats(
         return
 
     repo_list = service.list_repos()
+    if as_json:
+        # The shape `repos --json` emits, since both read the same rows.
+        print_json({'repos': repo_list})
+        return
     if not repo_list:
         console.print('No repos indexed yet.')
         return
