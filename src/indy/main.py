@@ -31,6 +31,19 @@ from indy.repos import all_index_targets
 from indy.repos import get_target_by_name
 from indy.storage import IndexNotFoundError
 
+
+def examples(*rows: tuple[str, str]) -> str:
+    """A help screen's examples block: each command beside the situation it answers.
+
+    Written as a markdown list because both renderers between here and the terminal join
+    lines. Typer folds an epilog's single line breaks into spaces and keeps a blank line as
+    one break, and markdown then reflows consecutive plain lines into one paragraph. A list
+    item is the shape that comes out of both as a line of its own. Each row is kept short
+    enough to stay on that one line in an 80-column terminal.
+    """
+    return '\n\n'.join(['Examples:', *(f'- {command} — {purpose}' for command, purpose in rows)])
+
+
 # Markdown, so a docstring wrapped at the source's width reflows to the terminal's. Under the
 # default rich mode, every line break after a command's first paragraph is printed as written.
 indy_app = typer.Typer(
@@ -38,6 +51,13 @@ indy_app = typer.Typer(
     no_args_is_help=True,
     rich_markup_mode='markdown',
     help='Semantic search index for local codebases, docs, and notes.',
+    epilog=examples(
+        ('indy search "retry with backoff"', 'find code by what it does, not its name'),
+        ('indy symbol index_session', 'jump to a function or class you can name'),
+        ('indy deps index_session -d callers', 'what calls it, before you change it'),
+        ('indy index', 'bring every registered repo up to date'),
+        ('indy status', 'check how old the index is and whether files failed'),
+    ),
 )
 console = Console(highlight=False)
 err_console = Console(highlight=False, stderr=True)
@@ -92,7 +112,13 @@ def print_json(data: object) -> None:
     print(json.dumps(data))
 
 
-@indy_app.command('status')
+@indy_app.command(
+    'status',
+    epilog=examples(
+        ('indy status', 'how much is indexed, how old it is, and what failed'),
+        ('indy status --json', 'the same totals, for a script'),
+    ),
+)
 def status(
     as_json: bool = typer.Option(False, '--json', help='Output as JSON to stdout.'),
 ):
@@ -144,7 +170,14 @@ def complete_target_name(incomplete: str) -> list[tuple[str, str]]:
     ]
 
 
-@indy_app.command('index')
+@indy_app.command(
+    'index',
+    epilog=examples(
+        ('indy index', 'bring every registered repo up to date'),
+        ('indy index indy', 'refresh one repo after a burst of changes to it'),
+        ('indy index --path ~/src/vendored-lib', 'index a directory no registry lists'),
+    ),
+)
 def index(
     repo: str = typer.Argument(None, help='Repo to index. Omit to index everything.', autocompletion=complete_target_name),
     path: str = typer.Option(None, '--path', '-p', help='Index a directory that is not a registered repo.'),
@@ -412,7 +445,13 @@ def describe_scip(state: dict) -> str:
     return f'[{color}]scip-python {state["status"]}: {escape(state["reason"] or "")}[/{color}]'
 
 
-@indy_app.command('errors')
+@indy_app.command(
+    'errors',
+    epilog=examples(
+        ('indy errors', 'which files the last runs could not index, and why'),
+        ('indy errors --json', 'the same rows, for a script'),
+    ),
+)
 def errors(
     as_json: bool = typer.Option(False, '--json', help='Output as JSON to stdout.'),
 ) -> None:
@@ -442,7 +481,10 @@ def errors(
     console.print(f'\n{len(error_details)} total — run [bold]indy errors-clear[/bold] to remove')
 
 
-@indy_app.command('errors-clear')
+@indy_app.command(
+    'errors-clear',
+    epilog=examples(('indy errors-clear', 'empty the list once those files are fixed or deleted')),
+)
 def errors_clear():
     """Empty the list `indy errors` shows.
 
@@ -456,7 +498,13 @@ def errors_clear():
         console.print('No error records to clear.')
 
 
-@indy_app.command('forget')
+@indy_app.command(
+    'forget',
+    epilog=examples(
+        ('indy forget old-name', 'drop a repo indexed under a name it no longer has'),
+        ('indy repos', 'list the labels the index holds, to find the one to forget'),
+    ),
+)
 def forget(
     repo: str = typer.Argument(..., help='The indexed repo label to remove.'),
 ):
@@ -469,7 +517,10 @@ def forget(
     console.print('Run [bold]indy index[/bold] to re-index whatever is still a target.')
 
 
-@indy_app.command('watch')
+@indy_app.command(
+    'watch',
+    epilog=examples(('indy watch', 'make each save searchable here before the next index')),
+)
 def watch():
     """Index every save on this machine within a second, until stopped.
 
@@ -510,7 +561,14 @@ def print_problem(message: str) -> None:
     err_console.print(f'{clock()} [red]{escape(message)}[/red]', soft_wrap=True)
 
 
-@indy_app.command('search')
+@indy_app.command(
+    'search',
+    epilog=examples(
+        ('indy search "retry with backoff"', 'find code by what it does, not its name'),
+        ('indy search "parse config" --owned -n 5', 'the top five, in your own repos'),
+        ('indy search "connection pool" -l go --json', 'Go matches only, for a script'),
+    ),
+)
 def search(
     query: str = typer.Argument(..., help='Natural language search query.'),
     repo: str = typer.Option(None, '--repo', '-r', help='Limit search to this repo.'),
@@ -547,7 +605,13 @@ def search(
     print_freshness(repo=repo, owned=ownership)
 
 
-@indy_app.command('symbol')
+@indy_app.command(
+    'symbol',
+    epilog=examples(
+        ('indy symbol index_session', 'every definition of a name, in every repo'),
+        ('indy symbol IndexSession --repo indy', 'the same, inside one repo'),
+    ),
+)
 def symbol(
     name: str = typer.Argument(..., help='Exact function or class name to look up.'),
     repo: str = typer.Option(None, '--repo', '-r', help='Limit to this repo.'),
@@ -573,7 +637,13 @@ def symbol(
     print_freshness(repo=repo)
 
 
-@indy_app.command('deps')
+@indy_app.command(
+    'deps',
+    epilog=examples(
+        ('indy deps index_session -d callers', 'what calls it, before you change it'),
+        ('indy deps IndexSession.index_target', 'callers and callees of one method'),
+    ),
+)
 def deps(
     symbol_name: str = typer.Argument(..., help="A bare name, or 'Owner.member' for a method or a module's function."),
     repo: str = typer.Option(None, '--repo', '-r', help='Limit to this repo.'),
@@ -625,7 +695,14 @@ def deps(
     print_freshness(repo=repo)
 
 
-@indy_app.command('stats')
+@indy_app.command(
+    'stats',
+    epilog=examples(
+        ('indy stats', 'chart which repos take up the index'),
+        ('indy stats indy', 'chart how much each recent scan of one repo changed'),
+        ('indy stats --json', 'the same sizes, for a script'),
+    ),
+)
 def stats(
     repo: str = typer.Argument(None, help='Show scan history for a specific repo.'),
     as_json: bool = typer.Option(False, '--json', help='Output as JSON to stdout.'),
@@ -702,7 +779,13 @@ def stats(
     console.print()
 
 
-@indy_app.command('repos')
+@indy_app.command(
+    'repos',
+    epilog=examples(
+        ('indy repos', 'every indexed repo, its size, and when it was last indexed'),
+        ('indy repos --json', 'the same list, for a script'),
+    ),
+)
 def repos(
     as_json: bool = typer.Option(False, '--json', help='Output as JSON to stdout.'),
 ):
@@ -725,11 +808,23 @@ def repos(
     console.print(table)
 
 
-config_app = typer.Typer(name='config', no_args_is_help=True, rich_markup_mode='markdown', help='Inspect the resolved settings.')
+config_app = typer.Typer(
+    name='config',
+    no_args_is_help=True,
+    rich_markup_mode='markdown',
+    help='Inspect the resolved settings.',
+    epilog=examples(('indy config show', 'which paths indy reads, and what set each one')),
+)
 indy_app.add_typer(config_app)
 
 
-@config_app.command('show')
+@config_app.command(
+    'show',
+    epilog=examples(
+        ('indy config show', 'which paths indy reads, and what set each one'),
+        ('indy config show --json', 'the same settings, for a script'),
+    ),
+)
 def config_show(
     as_json: bool = typer.Option(False, '--json', help='Output as JSON to stdout.'),
 ):
@@ -759,7 +854,13 @@ def config_show(
         console.print(extras)
 
 
-@indy_app.command('update')
+@indy_app.command(
+    'update',
+    epilog=examples(
+        ('indy update --check', 'whether a newer release exists, installing nothing'),
+        ('indy update', 'install the latest release'),
+    ),
+)
 def update(
     check_only: bool = typer.Option(False, '--check', help='Report whether an update is available without installing it'),
 ) -> None:
