@@ -50,7 +50,15 @@ indy_app = typer.Typer(
     name='indy',
     no_args_is_help=True,
     rich_markup_mode='markdown',
-    help='Semantic search index for local codebases, docs, and notes.',
+    help=(
+        'Semantic search index for local codebases, docs, and notes.\n\n'
+        'Start with `indy index` to build the index, then query it. '
+        '`indy status` says how old it is and which files failed, '
+        'and `indy watch` keeps it current as you save.\n\n'
+        'Reach for `search` when you can describe what the code does but not name it, since it ranks by meaning. '
+        'Reach for `symbol` or `deps` when you know the exact name, since they match it exactly '
+        'and show where it is defined or what calls it.'
+    ),
     epilog=examples(
         ('indy search "retry with backoff"', 'find code by what it does, not its name'),
         ('indy symbol index_session', 'jump to a function or class you can name'),
