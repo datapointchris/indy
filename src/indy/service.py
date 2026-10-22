@@ -583,8 +583,6 @@ def index_all(
         return [session.index_target(target, on_progress=on_progress) for target in all_index_targets()]
 
 
-# ── scip-python ───────────────────────────────────────────────────────────────
-
 NO_VENV_REASON = 'no .venv, and scip-python needs the project installed in one to name its modules'
 NO_NODE_REASON = 'Node.js is not installed, and scip-python runs on it: no node, npm or npx on PATH'
 INTERRUPTED_REASON = 'the index was interrupted before scip-python finished'
@@ -666,8 +664,6 @@ def resolve_python_symbols(
     replace_scip_index(conn, state)
     return state
 
-
-# ── live overlay ──────────────────────────────────────────────────────────────
 
 # Each warm request asks ollama to keep the model loaded for ten minutes, so a ping every
 # four keeps it resident with margin.

@@ -269,9 +269,6 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-# ── overlay ───────────────────────────────────────────────────────────────────
-
-
 def init_overlay_schema(conn: sqlite3.Connection) -> None:
     """The content tables, plus what only the overlay records.
 
@@ -398,7 +395,7 @@ def attach_overlay(conn: sqlite3.Connection) -> None:
     are hidden. An overlay reconciled with a different base is attached but not laid over this
     one. Its rows were compared with an index that has since been replaced, so they could hide
     newer content, and get_overlay_summary reports them set aside instead. A machine with no
-    overlay reads the base exactly as before. Read-only like the base itself.
+    overlay reads the base alone. Read-only like the base itself.
     """
     path = overlay_path()
     if not path.exists():
@@ -1038,8 +1035,6 @@ def get_symbol_callees(conn: sqlite3.Connection, source_symbol: str, repo: str |
     )
     return [row for row in rows if file_stem is None or Path(row['source_file']).stem == file_stem]
 
-
-# ── scip ──────────────────────────────────────────────────────────────────────
 
 SCIP_ROW_TABLES = ('scip_document', 'scip_symbol', 'scip_occurrence', 'scip_relationship')
 

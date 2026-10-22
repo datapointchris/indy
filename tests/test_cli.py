@@ -36,7 +36,6 @@ def test_bare_invocation_shows_help_rather_than_doing_anything():
 
 
 def test_config_is_a_namespace_and_show_is_the_read():
-    """Bare `config` lists its verbs and exits 2, so a second verb has somewhere to go."""
     bare = runner.invoke(indy_app, ['config'])
     assert bare.exit_code == 2
     assert 'show' in bare.output

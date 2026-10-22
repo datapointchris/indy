@@ -322,7 +322,7 @@ def test_a_deleted_file_leaves_the_index_on_the_next_run(indy_dir, tmp_path, stu
 
 
 def test_a_file_emptied_since_the_last_run_loses_its_chunks(indy_dir, tmp_path, stub_embedding):
-    """An empty file chunks to nothing, which once skipped it whole and left the old chunks searchable."""
+    """An empty file chunks to nothing, and skipping it would leave its old chunks searchable."""
     root = make_repo(tmp_path, **{'emptied.py': 'def old():\n    return 1\n'})
     index_once(root)
 

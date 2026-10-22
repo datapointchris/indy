@@ -195,8 +195,6 @@ def decode_index(data: bytes) -> list[Document]:
         raise ScipError(f'unreadable SCIP index: {exc}') from exc
 
 
-# ── symbols ───────────────────────────────────────────────────────────────────
-
 IDENTIFIER_CHARACTERS = frozenset('_+-$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
 
 
@@ -296,8 +294,6 @@ def name_symbol(symbol: str) -> SymbolName | None:
         kind = 'variable'
     return SymbolName(module, '.'.join(d.name for d in parts), kind)
 
-
-# ── linking ───────────────────────────────────────────────────────────────────
 
 # Raise whenever link_documents changes the rows it writes. A repo's fingerprint carries it,
 # so the next index runs scip-python again over every repo, however unchanged its files are.
@@ -438,9 +434,6 @@ def link_documents(root: Path, repo: str, documents: list[Document], indexed: se
             if symbol in defined
         ]
     return linked
-
-
-# ── running scip-python ───────────────────────────────────────────────────────
 
 
 def venv_python(root: Path) -> Path | None:

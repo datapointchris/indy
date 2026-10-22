@@ -17,12 +17,13 @@ named from `DB_PATH`'s resolved path, so each index has its own, and `INDY_DIR` 
 `data_dir` moves the overlay along with the index.
 
 **For any file the overlay holds, as rows or as a tombstone, the base's rows are hidden.**
-`get_read_db` attaches the overlay and creates temp views named `chunk`, `indexed_file` and
-`symbol_reference`, and `scip_document` and `scip_occurrence` where the base has them. SQLite resolves an unqualified name in the temp schema first, so every
-query in `storage.py` reads the merged store without naming either one. Overlay ids are
-negated in the views, which keeps an id unique across both. Vector search is the exception:
-a vec0 MATCH needs the virtual table itself, so `search_chunks` runs KNN on each store and
-merges by distance. A machine with no overlay attaches nothing and reads the base as before.
+`get_read_db` attaches the overlay and creates temp views named `chunk`, `indexed_file`,
+`symbol_reference`, and `scip_document` and `scip_occurrence` where the base has them.
+SQLite resolves an unqualified name in the temp schema first, so every query in
+`storage.py` reads the merged store without naming either one. Overlay ids are negated in
+the views, which keeps an id unique across both. Vector search is the exception: a vec0
+MATCH needs the virtual table itself, so `search_chunks` runs KNN on each store and merges
+by distance. A machine with no overlay attaches nothing and reads the base alone.
 
 **The overlay is written in place, and that is safe only because nothing syncs it.** It
 lives in the cache directory, never under `data_dir`, which is the directory a syncer

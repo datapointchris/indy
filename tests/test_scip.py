@@ -350,9 +350,6 @@ def test_scip_python_runs_again_only_once_a_python_file_changes(repo, scip_runs)
     assert callers('CaskProvider.install') == [('Provider.install_all', 'override')]
 
 
-# ── decoding ──────────────────────────────────────────────────────────────────
-
-
 def varint(value: int) -> bytes:
     out = bytearray()
     while True:
@@ -403,9 +400,6 @@ def test_a_truncated_index_is_refused_rather_than_read_short():
     document = message((1, 'src/a.py'))
     with pytest.raises(scip.ScipError):
         scip.decode_index(message((2, document))[:-3])
-
-
-# ── the real tool ─────────────────────────────────────────────────────────────
 
 
 @pytest.mark.skipif(not scip.node_installed(), reason='scip-python runs on Node.js')

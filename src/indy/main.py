@@ -549,8 +549,6 @@ def clock() -> str:
 
 
 # soft_wrap: under a service manager no terminal sets a width, and rich would break each line at 80.
-
-
 def print_live_change(change: service.LiveChange) -> None:
     detail = {
         'indexed': f'{change.embedded} embedded, {change.reused} reused',
