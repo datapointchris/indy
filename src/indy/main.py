@@ -615,7 +615,7 @@ def search(
     'symbol',
     epilog=examples(
         ('indy symbol index_session', 'every definition of a name, in every repo'),
-        ('indy symbol IndexSession --repo indy', 'the same, inside one repo'),
+        ('indy symbol index_session --repo indy', 'the same lookup, inside one repo'),
     ),
 )
 def symbol(
