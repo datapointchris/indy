@@ -181,7 +181,13 @@ def should_index(path: Path) -> bool:
         wanted = path.suffix.lower() in INDEXABLE_EXTENSIONS
     else:
         wanted = path.name in CODE_FILENAMES or shebang_language(read_first_line(path)) is not None
-    return wanted and path.stat().st_size <= MAX_FILE_SIZE_BYTES
+    if not wanted:
+        return False
+    # A dangling symlink is listed by the walk and has nothing to stat.
+    try:
+        return path.stat().st_size <= MAX_FILE_SIZE_BYTES
+    except OSError:
+        return False
 
 
 def compute_content_hash(content: str) -> str:

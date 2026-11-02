@@ -399,3 +399,10 @@ def test_a_suffix_less_file_is_indexed_by_its_name_or_its_shebang(tmp_path):
         },
     )
     assert {path.name for path in service.collect_indexable_files(root)} == {'deploy', 'Dockerfile', 'main.tf'}
+
+
+def test_a_dangling_symlink_is_skipped_rather_than_ending_the_walk(tmp_path):
+    root = make_repo(tmp_path, **{'notes.md': '# notes\n'})
+    (root / 'gone.json').symlink_to(tmp_path / 'removed.json')
+
+    assert {path.name for path in service.collect_indexable_files(root)} == {'notes.md'}
