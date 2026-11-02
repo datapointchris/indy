@@ -47,14 +47,14 @@ indy runs on defaults alone, and the defaults index nothing. Every registry and 
 to name, and the shape of each is under Configuration. `indy index --path ~/writing` indexes one
 directory under its own name, with no config at all.
 
-**When a search returns nothing, run `indy config show` first.** An index that searches nothing is
-almost always a config file that was never read, not a wrong path. `config show` prints each
-setting beside the layer that supplied it. A stale environment variable in one shell shows up there
-rather than as an empty result.
+**When a search returns nothing, run `indy config show` first.** An empty search usually means indy
+is reading a different config file, or no config file, from the one you edited. `config show`
+prints each setting beside the layer that supplied it. A stale environment variable in one shell
+shows up there rather than as an empty result.
 
 The first index embeds every file, and across many repos that takes hours. Each file is committed
-as it is embedded. Ctrl-C saves everything embedded so far as the index, and exits 130. The next
-run embeds only the files that are new or whose content changed.
+to the working copy as it is embedded. Ctrl-C saves everything embedded so far as the index, and
+exits 130. The next run embeds only the files that are new or whose content changed.
 
 Until a first index is saved, `status`, `search`, `symbol` and `deps` exit 1 with
 ``No index at <path>. Run `indy index`, or wait for a peer to deliver one.`` The second half is for
@@ -76,8 +76,8 @@ answers a bare exemplar name with its `owner/name`. It answers a directory typed
 label that already covers it. Indexing that tree by `--path` would put it in the index twice, under
 two labels.
 
-`--json` is on every read a script would pipe: `search`, `symbol`, `deps`, `status`, `repos` and
-`config show`.
+`--json` is on every read a script would pipe: `search`, `symbol`, `deps`, `status`, `errors`,
+`stats`, `repos` and `config show`.
 
 ## Which surface answers which question
 
@@ -158,8 +158,9 @@ happened per repo. `indy status` lists every repo it skipped or failed on, with 
 is run again only when something the run depends on changes: one of its Python files, its installed
 packages, the pinned scip-python, or the code in indy that reads the result.
 
-`indy watch` never runs it, because a run takes about twenty seconds on a large repo. A file saved
-since the last index answers by the syntactic rules until the next one.
+`indy watch` never runs it, because a run on a large repo takes tens of seconds, and no save can
+wait that long. `indy status --json | jq '.scip[] | {repo, seconds}'` prints each repo's last run
+time. A file saved since the last index answers by the syntactic rules until the next one.
 
 ## `index` — the index is replaced whole, never written in place
 
@@ -174,10 +175,10 @@ indy forget old-name          # drop a label, so its files index under the curre
 A run never opens `indy.db` for writing. It copies the index to `indy.db.building` beside it,
 indexes into the copy, and renames the finished copy over `indy.db`. The result is in SQLite's
 delete journal mode, with no `-wal` or `-shm` file beside it. A read opens the index read-only and
-leaves it byte-identical. So a file syncer only ever sees `indy.db` change whole, and never sees it
+leaves it byte-identical. A file syncer therefore only ever sees `indy.db` change whole, never
 half-written. A crashed run loses only its copy.
 
-The costs are deliberate. Each run copies the whole database before it starts. Results appear when
+This design has three costs. Each run copies the whole database before it starts. Results appear when
 the run ends, not as each file is embedded. Ctrl-C is the one early exit, and it swaps in what the
 run finished.
 

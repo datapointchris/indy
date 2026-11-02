@@ -984,8 +984,9 @@ def compact_live_overlay(read_here: Collection[str] = (), on_stage: Callable[[st
     hears 'overlay busy'. The only other writer is `indy watch`, which compacts the overlay
     against every base it has not reconciled with, so the new index is covered either way.
     Until it does, reads set the overlay aside rather than lay it over a base it was never
-    compared with. What waits is the mtime rule for read_here, which the next full index
-    applies. Failing here instead would report an index already in place as a failed run.
+    compared with. The watcher's compaction does not apply the read_here mtime rule, so a
+    file this run read at the same or a later mtime stays in the overlay until the next full
+    index. Failing here instead would report an index already in place as a failed run.
     """
     if not overlay_path().exists():
         return None

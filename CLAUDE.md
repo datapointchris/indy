@@ -57,7 +57,7 @@ exists to preserve them.
 `VACUUM INTO`, indexes into that, and renames the finished copy over `indy.db` —
 `service.index_session`, over `storage.open_working_db` and `commit_working_db`. One session
 spans a whole invocation, not one per target: the swap costs a copy of the database, so a
-session per target would copy it once for every target a full run covers rather than once.
+session per target would copy it once per target instead of once per run.
 `clear_errors` goes through the same session; copying the
 whole database to delete a few rows is disproportionate, and it is the price of there being
 no second write path.
@@ -245,6 +245,6 @@ EOF
 - **Age, and no count of files changed since** — counting them needs a gitignore-aware walk of
   every target on a read that must stay cheap, and a stat-only approximation cannot see a *new*
   file, so it would report zero for exactly the case the freshness line exists to catch.
-- **Settings resolve env var → config.toml → default, and report which layer won** — an index that
-  searches nothing is almost always a config file that was never read rather than a wrong path, so
+- **Settings resolve env var → config.toml → default, and report which layer won** — an empty
+  search usually means indy is reading a different config file, or none, from the one edited, so
   `indy config show` prints the source next to the value.
