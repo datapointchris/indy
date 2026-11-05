@@ -199,6 +199,9 @@ indy watch         # runs in the foreground until stopped, for a service manager
 indy config show   # the overlay row is the path of this index's overlay
 ```
 
+At a terminal it prints each save it indexes. Under a service manager it prints only problems, so
+its log stays readable.
+
 Each save goes into a local overlay that every read on this machine sees on top of the index.
 `search`, `symbol` and `deps` return it about a second later. A deleted file drops out of results
 the same way.

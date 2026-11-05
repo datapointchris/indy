@@ -540,7 +540,14 @@ def watch():
     stop = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
         signal.signal(signum, lambda *_: stop.set())
-    service.watch(stop, on_change=print_live_change, on_note=print_note, on_problem=print_problem)
+    # Progress is for a person watching. Under a service manager it would fill the log the problems go to.
+    at_terminal = sys.stderr.isatty()
+    service.watch(
+        stop,
+        on_change=print_live_change if at_terminal else lambda _: None,
+        on_note=print_note if at_terminal else lambda _: None,
+        on_problem=print_problem,
+    )
     err_console.print('Stopped.')
 
 
