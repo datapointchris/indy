@@ -536,6 +536,8 @@ def watch():
     worktree or an extra path goes into a local overlay that every read here sees on top of the
     index. Exemplar clones are left to `indy index`, which also clears from the overlay
     whatever the new index holds.
+
+    At a terminal it prints each save it indexes. With no terminal attached it prints only problems.
     """
     stop = threading.Event()
     for signum in (signal.SIGINT, signal.SIGTERM):
