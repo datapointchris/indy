@@ -18,7 +18,10 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from dataclasses import dataclass
 from dataclasses import replace
+from enum import StrEnum
 from pathlib import Path
+from typing import Literal
+from typing import get_args
 
 import httpx2
 
@@ -44,9 +47,8 @@ from indy.config import SKIP_FILES
 from indy.config import compact_path
 from indy.config import expand_path
 from indy.config import setting_source
-from indy.repos import EXEMPLAR
-from indy.repos import OWNED
 from indy.repos import IndexTarget
+from indy.repos import TargetKind
 from indy.repos import all_index_targets
 from indy.repos import get_exemplar_repo_names
 from indy.repos import get_owned_repo_names
@@ -148,6 +150,21 @@ class IndexProgress:
 
 
 ProgressCallback = Callable[[IndexProgress], None]
+
+
+class IndexStage(StrEnum):
+    """A point where a write stops to move the whole database, or leaves the overlay to the watcher.
+
+    A caller narrating a run names one case per member, so a new stage is a visible gap in
+    its dispatch rather than a pause it says nothing about.
+    """
+
+    SNAPSHOT = 'snapshot'
+    SAVE = 'save'
+    OVERLAY_BUSY = 'overlay busy'
+
+
+StageCallback = Callable[[IndexStage], None]
 
 
 def embed_text(text: str) -> list[float]:
@@ -274,7 +291,7 @@ class IndexSession:
         working copy in. They describe the files as they were before this run, and the run may
         already have replaced some of those.
         """
-        if target.kind != OWNED:
+        if target.kind != TargetKind.OWNED:
             return self.index_path(target.path, target.name, on_progress=on_progress, exclude=target.exclude)
         try:
             result = self.index_path(target.path, target.name, on_progress=on_progress, exclude=target.exclude)
@@ -300,7 +317,7 @@ class IndexSession:
 
 
 @contextmanager
-def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[IndexSession]:
+def index_session(on_stage: StageCallback | None = None) -> Iterator[IndexSession]:
     """Open a working copy, yield a session that writes to it, and swap it in when it ends.
 
     An interrupt swaps in what the run managed, rather than discarding it. Every file is
@@ -324,7 +341,7 @@ def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[Ind
     the watcher, and on_stage hears 'overlay busy'.
     """
     if on_stage:
-        on_stage('snapshot')
+        on_stage(IndexStage.SNAPSHOT)
     conn = open_working_db()
     session = IndexSession(conn)
     try:
@@ -337,7 +354,7 @@ def index_session(on_stage: Callable[[str], None] | None = None) -> Iterator[Ind
         discard_working_db(conn)
         raise
     if on_stage:
-        on_stage('save')
+        on_stage(IndexStage.SAVE)
     commit_working_db(conn)
     compact_live_overlay(session.indexed_labels, on_stage)
 
@@ -561,7 +578,7 @@ def index_path(
     repo_name: str,
     on_progress: ProgressCallback | None = None,
     exclude: tuple[str, ...] = (),
-    on_stage: Callable[[str], None] | None = None,
+    on_stage: StageCallback | None = None,
 ) -> dict:
     """Index one path as a session of its own."""
     with index_session(on_stage=on_stage) as session:
@@ -571,7 +588,7 @@ def index_path(
 def index_repo(
     repo_name: str,
     on_progress: ProgressCallback | None = None,
-    on_stage: Callable[[str], None] | None = None,
+    on_stage: StageCallback | None = None,
 ) -> dict:
     target = get_target_by_name(repo_name)
     if target is None:
@@ -582,7 +599,7 @@ def index_repo(
 
 def index_all(
     on_progress: ProgressCallback | None = None,
-    on_stage: Callable[[str], None] | None = None,
+    on_stage: StageCallback | None = None,
 ) -> list[dict]:
     """Index every target: portfolio repos, exemplar clones, and configured extra paths."""
     with index_session(on_stage=on_stage) as session:
@@ -739,10 +756,10 @@ def live_roots() -> list[LiveRoot]:
     """
     roots = []
     for target in all_index_targets():
-        if target.kind == EXEMPLAR:
+        if target.kind == TargetKind.EXEMPLAR:
             continue
         roots.append(LiveRoot(target.path, target.name, target.exclude))
-        if target.kind == OWNED:
+        if target.kind == TargetKind.OWNED:
             roots += [LiveRoot(path, target.name, target.exclude, branch, target.path) for path, branch in list_worktrees(target.path)]
     return roots
 
@@ -975,7 +992,7 @@ def stale_live_paths(root: LiveRoot) -> list[Path]:
     return stale + gone + revived
 
 
-def compact_live_overlay(read_here: Collection[str] = (), on_stage: Callable[[str], None] | None = None) -> dict | None:
+def compact_live_overlay(read_here: Collection[str] = (), on_stage: StageCallback | None = None) -> dict | None:
     """Drop what the overlay holds that the base now matches. None where the index has no overlay or it is busy.
 
     read_here names the labels this machine just indexed, as storage.compact_overlay takes them.
@@ -997,7 +1014,7 @@ def compact_live_overlay(read_here: Collection[str] = (), on_stage: Callable[[st
         if exc.sqlite_errorcode & 0xFF != sqlite3.SQLITE_BUSY:
             raise
     if on_stage:
-        on_stage('overlay busy')
+        on_stage(IndexStage.OVERLAY_BUSY)
     return None
 
 
@@ -1348,7 +1365,7 @@ def refresh(repo: str | None = None) -> dict:
     }
 
 
-def clear_errors(on_stage: Callable[[str], None] | None = None) -> int:
+def clear_errors(on_stage: StageCallback | None = None) -> int:
     """Remove all error records from indexed_file. Returns count cleared.
 
     Goes through a session like any other write. Copying the whole database to delete a
@@ -1360,7 +1377,7 @@ def clear_errors(on_stage: Callable[[str], None] | None = None) -> int:
         return session.clear_errors()
 
 
-def forget_repo(repo: str, on_stage: Callable[[str], None] | None = None) -> dict:
+def forget_repo(repo: str, on_stage: StageCallback | None = None) -> dict:
     """Delete everything indexed under one repo label. Returns what was deleted, per table.
 
     For a label the registry no longer produces: a target that was renamed, or absorbed
@@ -1497,16 +1514,24 @@ def find_callees(conn: sqlite3.Connection, symbol_name: str, repo: str | None = 
     return rows
 
 
-def get_dependencies(symbol_name: str, repo: str | None = None, direction: str = 'both') -> dict:
+DependencyDirection = Literal['callers', 'callees', 'both']
+
+
+def get_dependencies(symbol_name: str, repo: str | None = None, direction: DependencyDirection = 'both') -> dict:
     """Return callers and/or callees of a symbol from the reference table.
 
     direction='callers' → what calls symbol_name
     direction='callees' → what symbol_name calls
     direction='both'    → both
 
+    Any other direction raises ValueError, because an empty result would read as a symbol
+    with no callers and no callees.
+
     `resolved_by_scip` names the repos whose callers scip-python resolved, where a missing
     caller means the type checker found none rather than that no rule matched.
     """
+    if direction not in get_args(DependencyDirection):
+        raise ValueError(f'direction is one of {", ".join(get_args(DependencyDirection))}, not {direction!r}')
     conn = get_read_db()
     try:
         result: dict = {}

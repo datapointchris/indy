@@ -27,6 +27,7 @@ import indy.service as service
 from indy.charts import horizontal_bars
 from indy.charts import streamline
 from indy.repos import IndexTarget
+from indy.repos import TargetKind
 from indy.repos import all_index_targets
 from indy.repos import get_target_by_name
 from indy.storage import IndexNotFoundError
@@ -240,7 +241,7 @@ def index(
         if not root.exists():
             err_console.print(f'[red]Path not found: {root}[/red]')
             raise typer.Exit(1)
-        targets = [IndexTarget(name=root.name, path=root, kind='path')]
+        targets = [IndexTarget(name=root.name, path=root, kind=TargetKind.PATH)]
     elif repo:
         target = get_target_by_name(repo)
         if target is None:
@@ -300,7 +301,7 @@ def index(
     err_console.print(f'Completed in {format_elapsed(elapsed)}')
 
 
-def announce_stage(stage: str) -> None:
+def announce_stage(stage: service.IndexStage) -> None:
     """Narrate the two points where indexing stops to move the whole database.
 
     Both are silent multi-second pauses on an index this size, and an unexplained pause in a
@@ -309,14 +310,15 @@ def announce_stage(stage: str) -> None:
     'overlay busy' follows the save when the watcher holds its saved files, so the run says
     who reconciles them instead of ending silently with them in place.
     """
-    if stage == 'snapshot':
-        size = service.index_size_bytes()
-        if size:
-            err_console.print(f'Snapshotting the index ({format_size(size)})')
-    elif stage == 'save':
-        err_console.print('Saving the updated index')
-    elif stage == 'overlay busy':
-        err_console.print('`indy watch` is writing its saved files, so it reconciles them with this index')
+    match stage:
+        case service.IndexStage.SNAPSHOT:
+            size = service.index_size_bytes()
+            if size:
+                err_console.print(f'Snapshotting the index ({format_size(size)})')
+        case service.IndexStage.SAVE:
+            err_console.print('Saving the updated index')
+        case service.IndexStage.OVERLAY_BUSY:
+            err_console.print('`indy watch` is writing its saved files, so it reconciles them with this index')
 
 
 def format_current_file(name: str) -> str:

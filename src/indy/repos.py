@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from pathlib import PurePosixPath
 
@@ -7,9 +8,14 @@ from indy.config import EXEMPLAR_REGISTRY
 from indy.config import EXTRA_PATHS_RAW
 from indy.config import REPOS_REGISTRY
 
-OWNED = 'owned'
-EXEMPLAR = 'exemplar'
-EXTRA = 'extra'
+
+class TargetKind(StrEnum):
+    """Where a target came from, which decides whether scip-python and `indy watch` cover it."""
+
+    OWNED = 'owned'
+    EXEMPLAR = 'exemplar'
+    EXTRA = 'extra'
+    PATH = 'path'
 
 
 @dataclass(frozen=True)
@@ -18,7 +24,7 @@ class IndexTarget:
 
     name: str
     path: Path
-    kind: str
+    kind: TargetKind
     exclude: tuple[str, ...] = ()
 
 
@@ -48,7 +54,7 @@ def load_portfolio_repos() -> list[IndexTarget]:
             continue
         path = Path(repo.get('path', '')).expanduser()
         if path.exists():
-            targets.append(IndexTarget(name=repo['name'], path=path, kind=OWNED))
+            targets.append(IndexTarget(name=repo['name'], path=path, kind=TargetKind.OWNED))
     return targets
 
 
@@ -68,7 +74,7 @@ def load_exemplar_repos() -> list[IndexTarget]:
             IndexTarget(
                 name=f'{repo["owner"]}/{repo["name"]}',
                 path=path,
-                kind=EXEMPLAR,
+                kind=TargetKind.EXEMPLAR,
                 exclude=tuple(repo.get('index_exclude', [])),
             )
         )
@@ -81,7 +87,7 @@ def load_extra_paths() -> list[IndexTarget]:
     for entry in EXTRA_PATHS_RAW:
         path = Path(entry['path']).expanduser()
         if path.exists():
-            targets.append(IndexTarget(name=entry['name'], path=path, kind=EXTRA))
+            targets.append(IndexTarget(name=entry['name'], path=path, kind=TargetKind.EXTRA))
     return targets
 
 

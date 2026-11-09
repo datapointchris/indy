@@ -123,4 +123,4 @@ def test_is_excluded(path, patterns, expected):
 
 
 def test_index_target_defaults_to_no_excludes():
-    assert IndexTarget(name='example-repo', path='/tmp/example-repo', kind=repos.OWNED).exclude == ()
+    assert IndexTarget(name='example-repo', path='/tmp/example-repo', kind=repos.TargetKind.OWNED).exclude == ()

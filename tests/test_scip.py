@@ -20,8 +20,8 @@ from indy import config
 from indy import scip
 from indy import service
 from indy import storage
-from indy.repos import OWNED
 from indy.repos import IndexTarget
+from indy.repos import TargetKind
 
 REGISTRY_PY = """\
 from typing import Annotated
@@ -209,7 +209,7 @@ def scip_runs(monkeypatch):
 def index(*roots) -> list[dict]:
     """Index each root as an owned repo named after its directory, all in one session."""
     with service.index_session() as session:
-        return [session.index_target(IndexTarget(root.name, root, OWNED)) for root in roots]
+        return [session.index_target(IndexTarget(root.name, root, TargetKind.OWNED)) for root in roots]
 
 
 def callers(symbol: str) -> list[tuple[str, str]]:

@@ -16,8 +16,8 @@ import pytest
 
 from indy import service
 from indy import storage
-from indy.repos import OWNED
 from indy.repos import IndexTarget
+from indy.repos import TargetKind
 
 from .test_overlay import build_base_elsewhere
 from .test_overlay import callers
@@ -58,7 +58,7 @@ def repo(tmp_path, monkeypatch):
     git(root, 'init', '-q', '-b', 'main')
     git(root, 'add', '.')
     git(root, 'commit', '-q', '-m', 'start')
-    monkeypatch.setattr(service, 'all_index_targets', lambda: [IndexTarget(name='r', path=root, kind=OWNED)])
+    monkeypatch.setattr(service, 'all_index_targets', lambda: [IndexTarget(name='r', path=root, kind=TargetKind.OWNED)])
     service.index_path(root, 'r')
     return root
 

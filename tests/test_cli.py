@@ -10,6 +10,7 @@ from indy import main
 from indy import service
 from indy.main import indy_app
 from indy.repos import IndexTarget
+from indy.repos import TargetKind
 
 runner = CliRunner()
 
@@ -58,7 +59,7 @@ def test_an_empty_read_is_an_empty_array_at_exit_zero(monkeypatch, args, expecte
     monkeypatch.setattr(service, 'get_status', lambda: {'error_file_details': []})
     monkeypatch.setattr(service, 'list_repos', lambda: [])
     monkeypatch.setattr(service, 'repo_scan_history', lambda repo: [])
-    monkeypatch.setattr(main, 'get_target_by_name', lambda name: IndexTarget(name=name, path=Path('/nowhere'), kind='owned'))
+    monkeypatch.setattr(main, 'get_target_by_name', lambda name: IndexTarget(name=name, path=Path('/nowhere'), kind=TargetKind.OWNED))
 
     result = runner.invoke(indy_app, args)
 
@@ -87,7 +88,7 @@ def test_an_unknown_label_never_reaches_the_index(monkeypatch):
 
 def test_a_directory_the_registry_covers_is_answered_with_its_name(tmp_path, monkeypatch):
     """`indy index ~/repo` names the problem; the fix is the label the registry gave it."""
-    monkeypatch.setattr(main, 'all_index_targets', lambda: [IndexTarget(name='websites', path=tmp_path, kind='owned')])
+    monkeypatch.setattr(main, 'all_index_targets', lambda: [IndexTarget(name='websites', path=tmp_path, kind=TargetKind.OWNED)])
     monkeypatch.setattr(main, 'get_target_by_name', lambda name: None)
 
     result = runner.invoke(indy_app, ['index', str(tmp_path)])
@@ -109,7 +110,7 @@ def test_a_directory_no_registry_covers_is_answered_with_the_flag(tmp_path, monk
 
 def test_a_name_that_is_not_a_directory_still_gets_the_near_misses(monkeypatch):
     """A typo is not a path, and the advice for one must not crowd out the other."""
-    monkeypatch.setattr(main, 'all_index_targets', lambda: [IndexTarget(name='websites', path=Path('/nowhere'), kind='owned')])
+    monkeypatch.setattr(main, 'all_index_targets', lambda: [IndexTarget(name='websites', path=Path('/nowhere'), kind=TargetKind.OWNED)])
     monkeypatch.setattr(main, 'get_target_by_name', lambda name: None)
 
     result = runner.invoke(indy_app, ['index', 'website'])
