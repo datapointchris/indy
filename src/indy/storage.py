@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import os
 import sqlite3
 from collections.abc import Collection
 from pathlib import Path
@@ -89,7 +88,7 @@ def commit_working_db(conn: sqlite3.Connection) -> None:
     conn.execute('PRAGMA journal_mode=DELETE')
     conn.close()
     discard_sidecars(DB_PATH)
-    os.replace(WORKING_DB_PATH, DB_PATH)
+    WORKING_DB_PATH.replace(DB_PATH)
 
 
 def discard_working_db(conn: sqlite3.Connection) -> None:
