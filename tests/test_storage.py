@@ -282,9 +282,9 @@ def stub_embedding(monkeypatch):
     monkeypatch.setattr(service, 'embed_text', lambda text: [0.1] * config.EMBEDDING_DIM)
 
 
-def index_once(root, label='r'):
+def index_once(root, label='r', on_progress=None):
     conn = storage.open_working_db()
-    result = service.index_into(conn, root, label)
+    result = service.index_into(conn, root, label, on_progress=on_progress)
     storage.commit_working_db(conn)
     return result
 
@@ -320,6 +320,20 @@ def test_a_deleted_file_leaves_the_index_on_the_next_run(indy_dir, tmp_path, stu
     chunk_paths = {row[0] for row in read.execute('SELECT DISTINCT file_path FROM chunk')}
     read.close()
     assert {Path(p).name for p in chunk_paths} == {'kept.md'}
+
+
+def test_a_reindex_counts_progress_against_the_changed_files(indy_dir, tmp_path, stub_embedding):
+    """On a re-index nearly every file is scanned and nearly none re-embedded, so progress
+    counted against the file list would sit near done while the slow work was still ahead."""
+    root = make_repo(tmp_path, **{'a.md': '# A\n\nOne.\n', 'b.md': '# B\n\nTwo.\n', 'c.md': '# C\n\nThree.\n'})
+    index_once(root)
+
+    (root / 'b.md').write_text('# B\n\nChanged.\n')
+    ticks = []
+    index_once(root, on_progress=ticks.append)
+
+    last = ticks[-1]
+    assert (last.scanned, last.total, last.to_update, last.updated) == (3, 3, 1, 1)
 
 
 def test_a_file_emptied_since_the_last_run_loses_its_chunks(indy_dir, tmp_path, stub_embedding):
