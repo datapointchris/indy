@@ -32,7 +32,7 @@ def test_bare_invocation_shows_help_rather_than_doing_anything():
     """Help on stdout and exit 2 — incomplete command, not a failed one."""
     result = runner.invoke(indy_app, [])
     assert result.exit_code == 2
-    assert 'Usage:' in result.output
+    assert 'search' in result.output
 
 
 def test_config_is_a_namespace_and_show_is_the_read():

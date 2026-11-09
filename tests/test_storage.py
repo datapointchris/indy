@@ -147,9 +147,10 @@ def test_forgetting_swaps_a_whole_index_in(indy_dir):
 def test_a_read_connection_cannot_write(existing_index):
     """The passive checkpoint on close is a write, and it is what made peers diverge."""
     conn = storage.get_read_db()
-    with pytest.raises(sqlite3.OperationalError, match='readonly'):
+    with pytest.raises(sqlite3.OperationalError) as refused:
         add_file(conn, '~/r/b.py')
     conn.close()
+    assert refused.value.sqlite_errorcode == sqlite3.SQLITE_READONLY
 
 
 def test_reading_leaves_the_index_untouched(existing_index):
