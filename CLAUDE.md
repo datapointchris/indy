@@ -165,6 +165,11 @@ EOF
   correct [0,1] similarity scores. L2 would produce incorrect rankings for non-normalized vectors.
 - **KNN oversample + Python filter** — vec0 MATCH can't filter on metadata; oversample 20× then
   filter by repo/language in Python.
+- **`service.embed_text` is the one door to ollama, and it checks the vector, not only the
+  status.** A 200 with an empty `embeddings` list, or a vector whose width is not
+  `EMBEDDING_DIM`, raises a `RuntimeError` naming the model. Indexing records that against the
+  file for `indy errors`, and a search exits on it. `warm_model` also posts to ollama and
+  discards the response, so nothing it receives is checked.
 - **No git post-commit hook** — `indy watch` sees every save, committed or not, and a
   scheduled `indy index` rebuilds the base. Per-repo hook management adds maintenance
   overhead and would still miss uncommitted work.

@@ -35,6 +35,7 @@ from indy.config import CODE_FILENAMES
 from indy.config import CONFIG_EXTENSIONS
 from indy.config import CONFIG_PATH
 from indy.config import DOC_EXTENSIONS
+from indy.config import EMBEDDING_DIM
 from indy.config import EXEMPLAR_REGISTRY
 from indy.config import EXTRA_PATHS_RAW
 from indy.config import INDY_DIR
@@ -168,6 +169,14 @@ StageCallback = Callable[[IndexStage], None]
 
 
 def embed_text(text: str) -> list[float]:
+    """One vector for `text`, at the width the vector table stores.
+
+    Every embedding indexing, `watch` and `search` make comes through here. A 200 says the
+    request was served, not that it produced a usable vector: an empty `embeddings` list
+    would otherwise surface as an IndexError, and a model of another width as a sqlite-vec
+    dimension error on insert, and neither names the model. So the shape is checked here,
+    and the failure is recorded against the file as `indy errors` shows it.
+    """
     response = httpx2.post(
         f'{OLLAMA_HOST}/api/embed',
         json={'model': OLLAMA_MODEL, 'input': text},
@@ -179,7 +188,11 @@ def embed_text(text: str) -> list[float]:
         except Exception:
             body = response.text
         raise RuntimeError(f'embedding failed ({response.status_code}): {body}')
-    return response.json()['embeddings'][0]
+    embeddings = response.json().get('embeddings') or [[]]
+    vector: list[float] = embeddings[0]
+    if len(vector) != EMBEDDING_DIM:
+        raise RuntimeError(f'{OLLAMA_MODEL} returned a {len(vector)}-dimension embedding, and the index stores {EMBEDDING_DIM}')
+    return vector
 
 
 def read_first_line(path: Path) -> str:
