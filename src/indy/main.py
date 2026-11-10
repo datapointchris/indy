@@ -30,7 +30,6 @@ from indy.repos import IndexTarget
 from indy.repos import TargetKind
 from indy.repos import all_index_targets
 from indy.repos import get_target_by_name
-from indy.storage import IndexNotFoundError
 
 
 def examples(*rows: tuple[str, str]) -> str:
@@ -913,7 +912,7 @@ def main() -> None:
         sys.exit(1)
     try:
         indy_app()
-    except IndexNotFoundError as exc:
+    except service.IndexNotFoundError as exc:
         err_console.print(f'[red]{escape(str(exc))}[/red]', soft_wrap=True)
         sys.exit(1)
 

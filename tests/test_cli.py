@@ -1,5 +1,6 @@
 """The machine contract: what a caller shelling out to indy can rely on."""
 
+import ast
 import json
 from pathlib import Path
 
@@ -13,6 +14,19 @@ from indy.repos import IndexTarget
 from indy.repos import TargetKind
 
 runner = CliRunner()
+
+
+def test_the_cli_reaches_the_index_only_through_service():
+    """service is the API: main may not import storage, by any spelling of the import."""
+    tree = ast.parse(Path(main.__file__).read_text())
+    imported = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported += [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            imported += [f'{node.module}.{alias.name}' for alias in node.names]
+    assert 'indy.service' in imported
+    assert [name for name in imported if name.startswith('indy.storage')] == []
 
 
 def test_version_is_one_line_naming_the_tool_and_exits_clean():

@@ -4,6 +4,9 @@ Semantic search index for local codebases, docs, and notes.
 Local-first: sqlite-vec + ollama. No external APIs, no separate vector DB process.
 
 **service.py is the API.** All callers go through service.py. Never call storage.py directly from main.py.
+There is no exception: even storage's `IndexNotFoundError` reaches main.py as
+`service.IndexNotFoundError`. `test_the_cli_reaches_the_index_only_through_service` in
+`tests/test_cli.py` fails on any import of `indy.storage` in main.py.
 
 ## Storage
 
