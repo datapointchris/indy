@@ -35,7 +35,8 @@ Node.js with `npm` and `npx`. Without them, indy runs and `deps` answers by synt
 ## Starting from scratch
 
 ```bash
-ollama pull nomic-embed-text           # the embedding model; ollama must be serving on localhost:11434
+ollama serve &                         # the embedding server on localhost:11434; skip it if ollama already runs as a service
+ollama pull nomic-embed-text           # the embedding model indy asks the server for
 indy config show                       # every path indy reads, the layer that named it, and which are (missing)
 $EDITOR ~/.config/indy/repos.json      # the repos to index, at the repos_registry path config show printed
 indy index                             # embeds every active repo, exemplar and extra path; Ctrl-C keeps what finished
@@ -46,6 +47,11 @@ indy search "where retries back off"   # proves it worked: ranked chunks, closed
 indy runs on defaults alone, and the defaults index nothing. Every registry and extra path is yours
 to name, and the shape of each is under Configuration. `indy index --path ~/writing` indexes one
 directory under its own name, with no config at all.
+
+ollama's Linux install script and its macOS app each start the server on their own, so
+`curl -s localhost:11434` printing `Ollama is running` means the first line is already done. Every
+`index`, `search` and `watch` needs it running. A server on another host or port is named by
+`ollama_host` in `config.toml`, or by `OLLAMA_HOST`.
 
 **When a search returns nothing, run `indy config show` first.** An empty search usually means indy
 is reading a different config file, or no config file, from the one you edited. `config show`
