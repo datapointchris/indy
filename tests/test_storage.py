@@ -416,6 +416,17 @@ def test_a_suffix_less_file_is_indexed_by_its_name_or_its_shebang(tmp_path):
     assert {path.name for path in service.collect_indexable_files(root)} == {'deploy', 'Dockerfile', 'main.tf'}
 
 
+def test_a_file_over_the_size_cap_or_of_a_kind_indy_does_not_read_is_left_out(tmp_path):
+    root = make_repo(tmp_path, **{'notes.md': '# notes\n'})
+    (root / 'at-cap.md').write_text('x' * config.MAX_FILE_SIZE_BYTES)
+    (root / 'over-cap.md').write_text('x' * (config.MAX_FILE_SIZE_BYTES + 1))
+    (root / 'logo.png').write_bytes(b'\x89PNG\r\n\x1a\n' + bytes(64))
+    (root / 'a.out').write_bytes(b'\x7fELF\x02\x01\x01' + bytes(64))
+    (root / 'server').write_bytes(b'\x7fELF\x02\x01\x01' + bytes(64))
+
+    assert {path.name for path in service.collect_indexable_files(root)} == {'notes.md', 'at-cap.md'}
+
+
 def test_a_dangling_symlink_is_skipped_rather_than_ending_the_walk(tmp_path):
     root = make_repo(tmp_path, **{'notes.md': '# notes\n'})
     (root / 'gone.json').symlink_to(tmp_path / 'removed.json')
