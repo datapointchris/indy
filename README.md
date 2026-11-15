@@ -85,37 +85,19 @@ indexed root:
 - an extra path, by the `name` its config entry gives it
 - a directory indexed with `--path`, by the directory's own name
 
-`index`, `stats` and `forget` take a label as their argument. `search`, `symbol` and `deps` take one
-as `--repo`. TAB completes a label for `index`, and matches an exemplar on its name alone. `index`
-answers a bare exemplar name with its `owner/name`. It answers a directory typed as a label with the
-label that already covers it. Indexing that tree by `--path` would put it in the index twice, under
-two labels.
+A command that writes or describes one label takes it as its argument, and a read that can range
+over every label narrows to one with `--repo`. TAB completes a label for `index`, and matches an
+exemplar on its name alone. `index` answers a bare exemplar name with its `owner/name`. It answers a
+directory typed as a label with the label that already covers it. Indexing that tree by `--path`
+would put it in the index twice, under two labels.
 
-`--json` is on every read a script would pipe: `search`, `symbol`, `deps`, `status`, `errors`,
-`stats`, `repos` and `config show`.
+Every read a script would pipe takes `--json`, which prints one JSON document on stdout.
 
-## Which surface answers which question
-
-| Ask | Surface | Reads |
-| --- | --- | --- |
-| Where is the code that does this | `search` | the vectors, after ollama embeds the query |
-| Where is this function or class defined | `symbol` | the chunks, by exact name |
-| What calls this, and what does it call | `deps` | Python references, from scip-python where it ran |
-| Keep results current while I edit | `watch` | filesystem events under every repo, worktree and extra path |
-| Bring the index up to date | `index` | the registries, the extra paths, and every file under them |
-| How old is the index, and did the last run work | `status` | the run history, scip-python's results, and the error count |
-| Which files failed to index, and why | `errors` | the per-file error records |
-| What is in the index, and how big | `repos`, `stats` | file and chunk counts per label, and one label's scan history |
-| Which settings are in effect | `config show` | the environment, `config.toml`, and the defaults |
-| A repo was renamed or removed | `forget` | the one label's rows |
+`indy --help` lists every command with a line on what it is for, and `indy <command> --help` gives
+that command's arguments, flags and examples. The sections below cover what help does not: how each
+part works, and what that costs.
 
 ## `search` and `symbol` — every answer closes on how old the index is
-
-```bash
-indy search "parse a config file and report the layer"   # the ten closest chunks, from everything
-indy search "retry with backoff" --owned --language go     # only your own repos, only Go
-indy symbol get_read_db                                    # where a function or class is defined, by exact name
-```
 
 `search`, `symbol` and `deps` each close with how far behind the index is. `--json` carries the same
 thing as a `freshness` object. A full index runs only when someone runs it. So a symbol written
@@ -135,11 +117,6 @@ a search covers everything, extra paths included. A result from a linked worktre
 `@branch`.
 
 ## `deps` — callers by syntax everywhere, by type checker where scip-python ran
-
-```bash
-indy deps get_read_db               # callers and callees of a bare name
-indy deps Store.save -d callers     # Owner.member: the callers of one method, each with how it matched
-```
 
 `deps` reads Python only. Each caller carries a label saying how it matched:
 
@@ -179,14 +156,6 @@ time. A file saved since the last index answers by the syntactic rules until the
 
 ## `index` — the index is replaced whole, never written in place
 
-```bash
-indy index                    # every active repo, exemplar clone and extra path
-indy index myrepo             # one label
-indy index --path ~/writing   # a directory no registry names, labeled after the directory
-indy errors                   # the files that failed, grouped by label
-indy forget old-name          # drop a label, so its files index under the current one
-```
-
 A run never opens `indy.db` for writing. It copies the index to `indy.db.building` beside it,
 indexes into the copy, and renames the finished copy over `indy.db`. The result is in SQLite's
 delete journal mode, with no `-wal` or `-shm` file beside it. A read opens the index read-only and
@@ -209,12 +178,8 @@ lists the failures, and `indy errors-clear` drops the records.
 
 ## `watch` — each save is searchable a second later, from an overlay nothing syncs
 
-```bash
-indy watch         # runs in the foreground until stopped, for a service manager to keep alive
-indy config show   # the overlay row is the path of this index's overlay
-```
-
-At a terminal it prints each save it indexes. Under a service manager it prints only problems, so
+`indy watch` runs in the foreground until stopped, for a service manager to keep alive. At a
+terminal it prints each save it indexes. Under a service manager it prints only problems, so
 its log stays readable.
 
 Each save goes into a local overlay that every read on this machine sees on top of the index.
