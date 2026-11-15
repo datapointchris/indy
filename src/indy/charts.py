@@ -10,7 +10,6 @@ from rich.console import Console
 from rich.text import Text
 
 BLOCKS = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█']
-PARTIAL_BARS = ['  ', '▁▁', '▂▂', '▃▃', '▄▄', '▅▅', '▆▆', '▇▇']
 
 
 def bar_str(value: float, max_value: float, width: int, color: str = 'cyan') -> Text:
@@ -46,77 +45,18 @@ def horizontal_bars(
     color: str = 'yellow',
     bar_width: int = 35,
     value_suffix: str = '',
-    console: Console | None = None,
+    console: Console,
 ) -> None:
     """Render horizontal bars with labels and value annotations."""
-    con = console or Console()
     max_val = max(values) if values else 0
     max_label_len = max((len(lbl) for lbl in labels), default=0)
 
-    con.print(f'\n  [bold]{title}[/bold]')
+    console.print(f'\n  [bold]{title}[/bold]')
     for label, value in zip(labels, values, strict=False):
         line = Text(f'    {label:>{max_label_len}}  ')
         line.append_text(bar_str(value, max_val, bar_width, color))
         line.append(f'  {int(value)}{value_suffix}')
-        con.print(line)
-
-
-def vertical_bars(
-    title: str,
-    labels: list[str],
-    values: list[float],
-    *,
-    color: str = 'cyan',
-    height: int = 12,
-    second_values: list[float] | None = None,
-    second_color: str = 'magenta',
-    console: Console | None = None,
-) -> None:
-    """Render a vertical bar chart with optional dual series."""
-    con = console or Console()
-    all_vals = values.copy()
-    if second_values:
-        all_vals.extend(second_values)
-    max_val = max(all_vals) if all_vals else 0
-    if max_val <= 0:
-        con.print(f'\n  [bold]{title}[/bold]')
-        con.print('    No data.')
-        return
-
-    con.print(f'\n  [bold]{title}[/bold]')
-
-    for row in range(height, 0, -1):
-        if row == height:
-            label = format_axis_label(max_val)
-        elif row == height // 2:
-            label = format_axis_label(max_val / 2)
-        elif row == 1:
-            label = '0'
-        else:
-            label = ''
-
-        line = Text(f'  {label:>5} │ ')
-
-        for i, v in enumerate(values):
-            append_bar_cell(line, v, max_val, height, row, color)
-            if second_values:
-                append_bar_cell(line, second_values[i], max_val, height, row, second_color)
-            line.append(' ')
-
-        con.print(line)
-
-    bar_width_per = 3 if not second_values else 5
-    axis_width = len(values) * bar_width_per + len(values) - 1
-    con.print(f'        └{"─" * (axis_width + 2)}')
-
-    label_line = Text('         ')
-    for lbl in labels:
-        short = lbl[:4]
-        if second_values:
-            label_line.append(f'{short:<5}')
-        else:
-            label_line.append(f'{short:<3}')
-    con.print(label_line)
+        console.print(line)
 
 
 def streamline(
@@ -126,18 +66,17 @@ def streamline(
     *,
     color: str = 'cyan',
     height: int = 10,
-    console: Console | None = None,
+    console: Console,
 ) -> None:
     """Render a line chart with box-drawing curves for smooth transitions.
 
     Column width adapts to label length. Each data point gets `col_width` chars
     wide, with 1-char transition columns using ╭╮╯╰│ for smooth curves.
     """
-    con = console or Console()
     max_val = max(values) if values else 0
     if max_val <= 0:
-        con.print(f'\n  [bold]{title}[/bold]')
-        con.print('    No data.')
+        console.print(f'\n  [bold]{title}[/bold]')
+        console.print('    No data.')
         return
 
     col_width = max((len(lbl) for lbl in labels), default=2)
@@ -147,7 +86,7 @@ def streamline(
     heights = [max(1, round((v / max_val) * height)) for v in values]
     n = len(heights)
 
-    con.print(f'\n  [bold]{title}[/bold]')
+    console.print(f'\n  [bold]{title}[/bold]')
 
     for row in range(height, 0, -1):
         if row == height:
@@ -170,15 +109,15 @@ def streamline(
             if i < n - 1:
                 line.append(transition_char(row, h, heights[i + 1], color))
 
-        con.print(line)
+        console.print(line)
 
     axis_width = n * col_width + (n - 1)
-    con.print(f'        └{"─" * (axis_width + 2)}')
+    console.print(f'        └{"─" * (axis_width + 2)}')
 
     label_line = Text('         ')
     for lbl in labels:
         label_line.append(f'{lbl:<{slot_width}}')
-    con.print(label_line)
+    console.print(label_line)
 
 
 def transition_char(row: int, h_left: int, h_right: int, color: str) -> Text:
@@ -206,23 +145,3 @@ def transition_char(row: int, h_left: int, h_right: int, color: str) -> Text:
         return Text(char, style=color)
 
     return Text(' ')
-
-
-def append_bar_cell(
-    line: Text,
-    value: float,
-    max_val: float,
-    height: int,
-    row: int,
-    color: str,
-) -> None:
-    """Append one 2-char-wide bar cell to a Text line for a given row."""
-    bar_height = (value / max_val) * height
-    if bar_height >= row:
-        line.append('██', style=color)
-    elif bar_height > row - 1:
-        frac = bar_height - (row - 1)
-        idx = min(int(frac * 8), 7)
-        line.append(PARTIAL_BARS[idx], style=color)
-    else:
-        line.append('  ')

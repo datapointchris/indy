@@ -116,8 +116,12 @@ def root(
 
 
 def print_json(data: object) -> None:
-    """Emit JSON to stdout, bypassing Rich markup — the scripting/agent-facing output shared by every --json flag."""
-    print(json.dumps(data))
+    """Emit JSON to stdout, bypassing Rich markup — the scripting/agent-facing output shared by every --json flag.
+
+    `Console.out` writes through the stdout console with markup, wrapping and cropping off,
+    so the document arrives exactly as `json.dumps` built it.
+    """
+    console.out(json.dumps(data), highlight=False)
 
 
 @indy_app.command(
