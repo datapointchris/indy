@@ -55,6 +55,7 @@ def test_the_oldest_scan_in_scope_is_the_one_reported():
     """The newest describes the last repo someone indexed and nothing about the rest of them."""
     summary = service.summarize_freshness({'stale': ago(days=15), 'fresh': ago(minutes=2)})
 
+    assert summary is not None
     assert summary['repos'] == 2
     assert summary['oldest']['repo'] == 'stale'
     assert summary['newest']['repo'] == 'fresh'
@@ -65,6 +66,7 @@ def test_a_scope_measures_only_the_repos_the_read_could_match():
     """`--repo fresh` cannot return a stale repo's rows, so it must not be charged its age."""
     summary = service.summarize_freshness({'stale': ago(days=15), 'fresh': ago(minutes=2)}, scope={'fresh'})
 
+    assert summary is not None
     assert summary['repos'] == 1
     assert summary['oldest']['repo'] == 'fresh'
 

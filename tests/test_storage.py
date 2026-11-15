@@ -329,7 +329,7 @@ def test_a_reindex_counts_progress_against_the_changed_files(indy_dir, tmp_path,
     index_once(root)
 
     (root / 'b.md').write_text('# B\n\nChanged.\n')
-    ticks = []
+    ticks: list[service.IndexProgress] = []
     index_once(root, on_progress=ticks.append)
 
     last = ticks[-1]

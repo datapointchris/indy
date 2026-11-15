@@ -226,7 +226,9 @@ def test_a_read_or_an_index_under_another_data_dir_never_touches_this_index_over
     with monkeypatch.context() as patch:
         patch.setattr(storage, 'DB_PATH', other)
         assert symbols('paint') == []
-        assert service.index_freshness()['overlay'] is None
+        freshness = service.index_freshness()
+        assert freshness is not None
+        assert freshness['overlay'] is None
 
     assert storage.get_overlay_paths(overlay, '') == [str(repo / 'tools.py')]
     assert symbols('paint') == [(str(repo / 'tools.py'), None)]

@@ -410,4 +410,4 @@ def test_every_stubbed_case_holds_against_the_pinned_scip_python(repo):
     (state,) = (result['scip'] for result in index(repo))
 
     assert (state['status'], state['reason']) == ('ok', None)
-    assert {case.id: callers(case.values[0]) for case in SCIP_CALLERS} == {case.id: case.values[1] for case in SCIP_CALLERS}
+    assert {case.id: callers(str(case.values[0])) for case in SCIP_CALLERS} == {case.id: case.values[1] for case in SCIP_CALLERS}

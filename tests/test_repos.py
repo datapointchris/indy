@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -38,8 +39,11 @@ def test_same_name_in_both_registries_stays_distinct(tmp_path, monkeypatch):
     assert exemplar == {'upstream/blog'}
     assert not (owned & exemplar), 'a name must never land in both sets'
 
-    assert repos.get_target_by_name('blog').path == mine
-    assert repos.get_target_by_name('upstream/blog').path == theirs
+    owned_target, exemplar_target = repos.get_target_by_name('blog'), repos.get_target_by_name('upstream/blog')
+    assert owned_target is not None
+    assert owned_target.path == mine
+    assert exemplar_target is not None
+    assert exemplar_target.path == theirs
 
 
 def test_dormant_repos_are_not_indexed(tmp_path, monkeypatch):
@@ -99,6 +103,7 @@ def test_exemplar_carries_its_exclude_patterns(tmp_path, monkeypatch):
         exemplars=[{'name': 'fastapi', 'path': str(repo), 'owner': 'fastapi', 'index_exclude': ['tests/**']}],
     )
     target = repos.get_target_by_name('fastapi/fastapi')
+    assert target is not None
     assert target.exclude == ('tests/**',)
 
 
@@ -123,4 +128,4 @@ def test_is_excluded(path, patterns, expected):
 
 
 def test_index_target_defaults_to_no_excludes():
-    assert IndexTarget(name='example-repo', path='/tmp/example-repo', kind=repos.TargetKind.OWNED).exclude == ()
+    assert IndexTarget(name='example-repo', path=Path('/tmp/example-repo'), kind=repos.TargetKind.OWNED).exclude == ()

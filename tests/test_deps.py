@@ -172,7 +172,12 @@ def test_a_new_extractor_reaches_files_whose_content_did_not_change(repo, monkey
     storage.commit_working_db(conn)
 
     embedded: list[str] = []
-    monkeypatch.setattr(service, 'embed_text', lambda text: embedded.append(text) or [0.1] * config.EMBEDDING_DIM)
+
+    def embed_text(text):
+        embedded.append(text)
+        return [0.1] * config.EMBEDDING_DIM
+
+    monkeypatch.setattr(service, 'embed_text', embed_text)
     service.index_path(repo, 'r')
 
     assert embedded == []
