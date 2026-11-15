@@ -25,6 +25,15 @@ indy update --check                                                  # whether a
 Name the index on the install: without it uv asks PyPI, where `indy` is a different project. uv
 records the index beside the tool, which is where `indy update` reads it back.
 
+Without access to that index, install from the source. Every dependency comes from PyPI:
+
+```bash
+uv tool install git+https://github.com/datapointchris/indy   # the latest commit on main
+uv tool install .                                            # from a checkout of this repository
+```
+
+Upgrade such an install by running the same command again with `--reinstall`.
+
 `indy update` reinstalls the newest release over the current one. It refuses an install from a
 local checkout or from a branch, because neither carries a release version to compare. Every other
 command checks for a newer release at most once a day, and says so in one line after its own output.
