@@ -318,13 +318,11 @@ A file with no suffix is indexed when its first line is a shebang running `sh`, 
 Python, or `uv run`. Only that line is read to decide.
 
 In a git repo, the files are the ones `git ls-files` lists, tracked and untracked, so `.gitignore`
-is respected. Other paths fall back to a directory walk. Either way, these are always skipped:
-
-- the directories `.git`, `node_modules`, `__pycache__`, `.venv`, `venv`, `dist`, `build`,
-  `.mypy_cache`, `.ruff_cache` and `.pytest_cache`
-- the lock files `uv.lock`, `package-lock.json`, `yarn.lock`, `Cargo.lock`, `go.sum` and
-  `.terraform.lock.hcl`
-- any file over 500 KB
+is respected. Other paths fall back to a directory walk. Either way, three constants in
+`src/indy/config.py` decide what is always skipped. `SKIP_DIRS` names directories, such as `.git` and
+`node_modules`, that are dropped wherever they appear in a path. `SKIP_FILES` names files, mostly
+lock files, matched by exact name, so a lock file it does not name is indexed.
+`MAX_FILE_SIZE_BYTES` is the size above which a file is left out.
 
 ## Where it writes — one portable file, and a cache nothing syncs
 
