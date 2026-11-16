@@ -314,7 +314,7 @@ that only searches never writes the file it receives.
 
 ```text
 main.py        Thin Typer CLI over service.py
-service.py     All logic: index_path, search, search_symbol, refresh, get_dependencies, watch
+service.py     All logic: index_session, search, search_symbol, get_dependencies, watch
 storage.py     SQLite manifest (indexed_file, index_run, symbol_reference, scip_*) and sqlite-vec
                vectors, and the overlay a read sees on top of them
 chunker.py     Python AST chunking, tree-sitter (Go/TS/Rust/Lua), prose and code splitters,
