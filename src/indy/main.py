@@ -732,7 +732,7 @@ def stats(
         history = service.repo_scan_history(repo)
         if not history and get_target_by_name(repo) is None:
             err_console.print(f'[red]Repo {repo!r} not found. Exemplar clones are named owner/repo.[/red]')
-            raise typer.Exit(1)
+            raise typer.Exit(2)
         # A known repo that was never scanned is an empty answer at exit 0, in both text and --json output.
         if as_json:
             print_json({'repo': repo, 'scans': history})
