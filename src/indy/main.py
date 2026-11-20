@@ -604,9 +604,10 @@ def search(
     ownership = True if owned else (False if reference else None)
     results = service.search(query, repo=repo, language=language, limit=limit, owned=ownership)
 
+    for r in results:
+        r['score'] = round(1 - r.pop('distance'), 4)  # cosine distance to similarity
+
     if as_json:
-        for r in results:
-            r['score'] = round(1 - r.pop('distance'), 4)
         print_json({'results': results, 'freshness': service.index_freshness(repo=repo, owned=ownership)})
         return
 
@@ -614,9 +615,8 @@ def search(
         console.print('No results.')
 
     for i, r in enumerate(results, 1):
-        score = 1 - r['distance']  # convert distance to similarity
         symbol = f' · {r["symbol_name"]}' if r.get('symbol_name') else ''
-        console.print(f'\n[bold cyan]{i}.[/bold cyan] {r["file_path"]}{format_branch(r)}{symbol}  (score: {score:.2f})')
+        console.print(f'\n[bold cyan]{i}.[/bold cyan] {r["file_path"]}{format_branch(r)}{symbol}  (score: {r["score"]:.2f})')
         snippet = r['text'][:300].replace('\n', '\n   ')
         console.print(f'   {snippet}')
         if len(r['text']) > 300:
