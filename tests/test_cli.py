@@ -122,6 +122,26 @@ def test_a_directory_no_registry_covers_is_answered_with_the_flag(tmp_path, monk
     assert '--path' in result.output
 
 
+def test_an_index_with_nothing_to_index_fails_without_opening_a_session(monkeypatch):
+    """A new install with no registry has no targets, and finishing clean would read as indexed."""
+    monkeypatch.setattr(main, 'all_index_targets', lambda: [])
+    monkeypatch.setattr(service, 'index_session', lambda *a, **k: pytest.fail('opened a session with no targets'))
+
+    assert runner.invoke(indy_app, ['index']).exit_code == 1
+
+
+def test_update_on_an_install_uv_does_not_manage_fails_before_the_updater(monkeypatch):
+    """The updater's own refusal names a bare `uv tool install indy`, which installs another project."""
+
+    def not_installed(tool):
+        raise main.NotInstalledError(f'{tool} is not installed as a uv tool')
+
+    monkeypatch.setattr(main, 'read_installation', not_installed)
+    monkeypatch.setattr(main, 'run_update', lambda *a, **k: pytest.fail('reached the updater'))
+
+    assert runner.invoke(indy_app, ['update', '--check']).exit_code == 1
+
+
 def test_a_name_that_is_not_a_directory_still_gets_the_near_misses(monkeypatch):
     """A typo is not a path, and the advice for one must not crowd out the other."""
     monkeypatch.setattr(main, 'all_index_targets', lambda: [IndexTarget(name='websites', path=Path('/nowhere'), kind=TargetKind.OWNED)])

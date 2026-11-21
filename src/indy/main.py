@@ -11,7 +11,9 @@ from typing import Literal
 
 import typer
 from pyselfupdate import Config
+from pyselfupdate import NotInstalledError
 from pyselfupdate import notify
+from pyselfupdate import read_installation
 from pyselfupdate.typercmd import run_update
 from rich.console import Console
 from rich.markup import escape
@@ -74,6 +76,11 @@ err_console = Console(highlight=False, stderr=True)
 # Shared by the `update` command and the daily check below, so the notice cannot
 # name a release the update command would not install.
 UPDATE_CONFIG = Config(tool='indy', owner='datapointchris')
+
+# A source install from the repository the updater reads releases from. A bare `uv tool install
+# indy` asks PyPI, where `indy` is a different project. --force lets the same command repair a
+# uv tool install whose receipt cannot be read.
+INSTALL_COMMAND = f'uv tool install --force git+https://github.com/{UPDATE_CONFIG.owner}/{UPDATE_CONFIG.tool}'
 
 
 def version_callback(asked: bool) -> None:
@@ -254,10 +261,22 @@ def index(
                 err_console.print(f'  {advice}')
             for suggestion in suggest_target_names(repo):
                 err_console.print(f'  did you mean [bold]{suggestion}[/bold]?')
+            err_console.print(
+                '  [bold]indy repos[/bold] lists the labels already indexed, '
+                'and [bold]indy config show[/bold] names the registries every other name comes from.'
+            )
             raise typer.Exit(2)
         targets = [target]
     else:
         targets = all_index_targets()
+        # A run over no targets would finish clean, so a missing registry would read as indexed.
+        if not targets:
+            err_console.print('[red]Nothing to index: no registered repo, exemplar clone or extra path exists on disk.[/red]')
+            err_console.print(
+                '  [bold]indy config show[/bold] lists the registries and extra_paths indy reads, and marks each one missing.'
+            )
+            err_console.print('  [bold]indy index --path DIR[/bold] indexes a directory no registry lists.')
+            raise typer.Exit(1)
 
     results = []
     # The session wraps the progress display rather than sitting inside it: both the copy it
@@ -732,6 +751,7 @@ def stats(
         history = service.repo_scan_history(repo)
         if not history and get_target_by_name(repo) is None:
             err_console.print(f'[red]Repo {repo!r} not found. Exemplar clones are named owner/repo.[/red]')
+            err_console.print('  [bold]indy repos[/bold] lists the labels the index holds.')
             raise typer.Exit(2)
         # A known repo that was never scanned is an empty answer at exit 0, in both text and --json output.
         if as_json:
@@ -885,6 +905,12 @@ def update(
     check_only: bool = typer.Option(False, '--check', help='Report whether an update is available without installing it'),
 ) -> None:
     """Update indy to the latest published release."""
+    try:
+        read_installation(UPDATE_CONFIG.tool)
+    except NotInstalledError as error:
+        err_console.print("[red]✗ indy update failed: indy is not installed as a uv tool, or uv's record of it cannot be read.[/red]")
+        err_console.print(f'  Install it from its source with: [bold]{INSTALL_COMMAND}[/bold]')
+        raise typer.Exit(1) from error
     run_update(UPDATE_CONFIG, check_only=check_only)
 
 
