@@ -878,7 +878,9 @@ def config_show(
 
     table = Table(show_header=True)
     table.add_column('Setting')
-    table.add_column('Value')
+    # A path is the value a reader opens in an editor, so a long one breaks
+    # across lines whole rather than ending in '…'.
+    table.add_column('Value', overflow='fold')
     table.add_column('From')
     for setting in described['settings']:
         missing = '' if setting['exists'] else '  (missing)'
@@ -888,7 +890,7 @@ def config_show(
     if described['extra_paths']:
         extras = Table(show_header=True, title='extra_paths')
         extras.add_column('Name')
-        extras.add_column('Path')
+        extras.add_column('Path', overflow='fold')
         for entry in described['extra_paths']:
             extras.add_row(entry['name'], f'{entry["path"]}{"" if entry["exists"] else "  (missing)"}')
         console.print(extras)
